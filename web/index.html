@@ -18,6 +18,10 @@
 <header>
   <h1>Printers</h1>
   <span class="hint">Click a camera to open the printer. Drag a .gcode file onto a printer to send it.</span>
+  <span class="menu-wrap">
+    <button id="hidden-btn" class="hidden" aria-haspopup="true" aria-expanded="false"></button>
+    <div id="hidden-menu" class="menu hidden"></div>
+  </span>
   <button id="install" class="hidden" title="Install as an app on this device">Install app</button>
   <button id="alerts" class="hidden" title="Show a pop-up when a print finishes or fails">Enable alerts</button>
   <span class="who" id="who"></span>
@@ -35,7 +39,8 @@
 
 <template id="tile-template">
   <section class="tile nocam">
-    <div class="top"><span class="name"></span><span class="chip"></span></div>
+    <div class="top"><span class="name"></span><span class="chip"></span>
+      <button class="hide" title="Hide this camera on this device" aria-label="Hide this camera">×</button></div>
     <div class="view">
       <img alt="">
       <div class="nocam">Connecting to camera…</div>

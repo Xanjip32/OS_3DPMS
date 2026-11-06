@@ -29,6 +29,7 @@ reachable from the internet.
 - Notifications when a print finishes, fails, pauses or a printer goes offline: pop-ups in the
   dashboard, and on your phone through ntfy, Discord or Telegram
 - Per-camera rotation and mirroring
+- Hide cameras you do not need on a device (× button), and show them again from the top bar
 - Guided setup page: Tailscale login, add printers, publish — no config files to edit
 - Python standard library only: no packages to install, small attack surface
 

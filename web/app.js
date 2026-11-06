@@ -75,11 +75,19 @@ function buildTile(p) {
   const startBox = $('.start');
   let pending = null;
   let busy = false;
+  let stopped = false;
+  t.stop = () => { stopped = true; img.removeAttribute('src'); };
+  $('.hide').addEventListener('click', e => {
+    e.stopPropagation();
+    if (busy) { toast(`${p.name}: wait until the upload finishes`, true); return; }
+    hidePrinter(p.id, true);
+  });
 
   img.style.transform = camTransform(p);
 
   // Camera: poll snapshots. Short requests keep browser connections free.
   function nextFrame() {
+    if (stopped) return;
     if (document.hidden || modal.classList.contains('show')) { setTimeout(nextFrame, 1000); return; }
     img.src = `/snap/${id}?t=${Date.now()}`;
   }
@@ -98,6 +106,7 @@ function buildTile(p) {
 
   // Status (Klipper printers)
   async function status() {
+    if (stopped) return;
     try {
       const r = await fetch(`/api/status/${id}`);
       if (r.ok) {
@@ -289,6 +298,77 @@ async function pollEvents() {
   setTimeout(pollEvents, 5000);
 }
 
+// ---------------------------------------------------------------- hidden cameras
+// Hidden cameras are remembered per device (this browser only) and stop streaming.
+const HIDDEN_KEY = 'os3dpms.hidden';
+const hiddenBtn = document.getElementById('hidden-btn');
+const hiddenMenu = document.getElementById('hidden-menu');
+const tiles = new Map();
+let printers = [];
+let hiddenIds = new Set();
+try { hiddenIds = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch (e) { /* no storage */ }
+
+function saveHidden() {
+  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hiddenIds])); } catch (e) { /* no storage */ }
+}
+
+function hidePrinter(id, hide) {
+  if (hide) hiddenIds.add(id); else hiddenIds.delete(id);
+  saveHidden();
+  render();
+}
+
+function render() {
+  for (const p of printers) {
+    const tile = tiles.get(p.id);
+    if (!hiddenIds.has(p.id) && !tile) tiles.set(p.id, buildTile(p));
+    if (hiddenIds.has(p.id) && tile) { tile.stop(); tiles.delete(p.id); }
+  }
+  const visible = printers.filter(p => tiles.has(p.id)).map(p => tiles.get(p.id));
+  grid.replaceChildren(...visible);
+  if (!visible.length) {
+    const el = document.createElement('div');
+    el.className = 'notice';
+    el.textContent = 'All cameras are hidden. Use the "Hidden" button at the top to show them again.';
+    grid.append(el);
+    grid.style.height = '';
+  }
+  renderHiddenMenu();
+  layout();
+}
+
+function renderHiddenMenu() {
+  const hiddenList = printers.filter(p => hiddenIds.has(p.id));
+  hiddenBtn.classList.toggle('hidden', !hiddenList.length);
+  hiddenBtn.textContent = `Hidden (${hiddenList.length})`;
+  const items = hiddenList.map(p => {
+    const b = document.createElement('button');
+    b.textContent = `Show ${p.name}`;
+    b.addEventListener('click', () => hidePrinter(p.id, false));
+    return b;
+  });
+  if (hiddenList.length > 1) {
+    const all = document.createElement('button');
+    all.className = 'primary';
+    all.textContent = 'Show all';
+    all.addEventListener('click', () => { hiddenIds.clear(); saveHidden(); render(); });
+    items.push(all);
+  }
+  hiddenMenu.replaceChildren(...items);
+  if (!hiddenList.length) toggleMenu(false);
+}
+
+function toggleMenu(open) {
+  // Open towards the middle of the screen so the menu never runs off an edge.
+  const onRight = hiddenBtn.getBoundingClientRect().left > window.innerWidth / 2;
+  hiddenMenu.style.left = onRight ? 'auto' : '0';
+  hiddenMenu.style.right = onRight ? '0' : 'auto';
+  hiddenMenu.classList.toggle('hidden', !open);
+  hiddenBtn.setAttribute('aria-expanded', String(open));
+}
+hiddenBtn.addEventListener('click', e => { e.stopPropagation(); toggleMenu(hiddenMenu.classList.contains('hidden')); });
+document.addEventListener('click', e => { if (!hiddenMenu.contains(e.target)) toggleMenu(false); });
+
 async function start() {
   try {
     const me = await fetch('/api/me');
@@ -298,8 +378,8 @@ async function start() {
     document.getElementById('who').textContent = info.admin ? 'This PC (admin) · Setup at /setup' : info.user;
     const list = await (await fetch('/api/printers')).json();
     if (!list.length) { notice('No printers yet. Add them on the setup page of the printer PC.'); return; }
-    list.forEach(p => grid.appendChild(buildTile(p)));
-    layout();
+    printers = list;
+    render();
     updateAlertsButton();
     pollEvents();
   } catch (e) {

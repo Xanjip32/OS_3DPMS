@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1
+
+- × button on each camera hides it on that device; "Hidden (n)" menu at the top shows it again.
+  Hidden cameras stop streaming. The choice is saved in the browser, so each device can differ
+
 ## 1.3.0
 
 - The dashboard installs as an app on Windows, Mac, Android and iPhone (web app manifest,
