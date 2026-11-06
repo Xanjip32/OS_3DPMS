@@ -32,6 +32,10 @@ a user's browser, and the printers' network traffic.
 | Path traversal in file names | File names are reduced to a safe base name; only `.gcode`, `.gco`, `.g` and `.3mf` are accepted. |
 | Resource exhaustion | Upload size limit, one upload per printer at a time, connection cap, 60 s socket timeout, camera frame size limit. |
 | Starting a print on a busy printer | Klipper status is checked first; the print is not started while printing or paused. |
+| Notifications used to call arbitrary URLs (SSRF) | Only https ntfy links, `discord.com` webhooks and the Telegram API are accepted. |
+| Notification secrets leaked | ntfy links/tokens, Discord webhooks and Telegram tokens are DPAPI-encrypted and never returned to the browser. |
+| Camera pictures leaving the network | Attaching pictures to notifications is off by default and labelled on the setup page. |
+| Notification spam / mentions | At most 20 messages a minute; Discord mentions (`@everyone`) are disabled. |
 | No accountability | `audit.log` records the Tailscale user, printer, file and result of every upload, config change and publish. |
 
 ## Known limits
@@ -41,7 +45,10 @@ a user's browser, and the printers' network traffic.
 - Moonraker sees all requests as coming from the dashboard PC, so it trusts them.
   Moonraker's own login (`[authorization]` with users) still works if you enable it.
 - G-code is not inspected. A user who may upload can send any G-code.
-- Bambu printers have no status check, so the printer itself decides whether a new print starts.
+- Bambu printers are not status-checked before starting a print; the printer itself refuses a
+  new job while busy.
+- Notification text (printer name, file name) is sent to the notification service you choose.
+  Anyone who knows an ntfy.sh topic name can read it; use the generated private topic.
 - Processes running as the same Windows user can read the DPAPI-protected secrets.
 
 ## Good practice

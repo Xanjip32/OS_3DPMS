@@ -243,11 +243,95 @@ $('save').addEventListener('click', async () => {
   }
 });
 
+// ---------------------------------------------------------------- step 4: notifications
+const EVENT_LABELS = {
+  complete: 'finishes', error: 'fails / errors', paused: 'pauses',
+  cancelled: 'is cancelled', started: 'starts', offline: 'printer goes offline while printing',
+};
+const SECRET_INPUTS = ['ntfy_url', 'ntfy_token', 'discord_webhook', 'telegram_token'];
+const clearFlags = {};
+
+function renderNotifications(n, channels) {
+  const box = $('nt-events');
+  box.replaceChildren();
+  for (const [kind, label] of Object.entries(EVENT_LABELS)) {
+    const cb = el('input', { type: 'checkbox', 'data-event': kind });
+    cb.checked = !!n.events[kind];
+    box.append(el('label', { class: 'check' }, cb, label));
+  }
+  $('nt-snapshot').checked = !!n.snapshot;
+  $('telegram_chat_id').value = n.telegram_chat_id || '';
+  for (const key of SECRET_INPUTS) {
+    const input = $(key);
+    input.value = '';
+    clearFlags[key] = false;
+    input.placeholder = n['has_' + key] ? 'saved (leave empty to keep)' : '';
+  }
+  $('ntfy_url').placeholder = n.has_ntfy_url ? 'saved (leave empty to keep)' : 'https://ntfy.sh/your-private-topic';
+  setState('nt-state', channels.length ? channels.join(' + ') : 'off', channels.length ? 'ok' : '');
+}
+
+document.querySelectorAll('[data-clear]').forEach(btn => btn.addEventListener('click', () => {
+  const key = btn.getAttribute('data-clear');
+  const related = key === 'ntfy_url' ? ['ntfy_url', 'ntfy_token'] : [key];
+  related.forEach(k => { clearFlags[k] = true; $(k).value = ''; $(k).placeholder = 'will be removed when you save'; });
+}));
+
+$('ntfy-gen').addEventListener('click', () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(15));
+  const topic = 'os3dpms-' + Array.from(bytes, b => b.toString(36).padStart(2, '0')).join('').slice(0, 24);
+  const url = `https://ntfy.sh/${topic}`;
+  $('ntfy_url').value = url;
+  $('ntfy-show').textContent = `Subscribe to this in the ntfy app: ${url}`;
+});
+
+$('nt-save').addEventListener('click', async () => {
+  const msg = $('nt-msg');
+  const payload = { events: {}, snapshot: $('nt-snapshot').checked, telegram_chat_id: $('telegram_chat_id').value.trim() };
+  document.querySelectorAll('[data-event]').forEach(cb => { payload.events[cb.getAttribute('data-event')] = cb.checked; });
+  for (const key of SECRET_INPUTS) {
+    payload[key] = $(key).value.trim();
+    if (clearFlags[key]) payload['clear_' + key] = true;
+  }
+  msg.className = 'msg';
+  msg.textContent = 'Saving…';
+  try {
+    const r = await api('/api/setup/notifications', payload);
+    msg.className = 'msg ok';
+    msg.textContent = r.channels.length ? `Saved. Sending to: ${r.channels.join(', ')}.` : 'Saved. No phone channel set.';
+    await loadConfig();
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.message;
+  }
+});
+
+$('nt-test').addEventListener('click', async () => {
+  const msg = $('nt-msg');
+  msg.className = 'msg';
+  msg.textContent = 'Sending…';
+  try {
+    const r = await api('/api/setup/notify-test', {});
+    if (!r.channels.length) {
+      msg.textContent = 'No phone channel saved yet. Fill one in and click Save first.';
+      return;
+    }
+    const parts = Object.entries(r.results).map(([ch, res]) => `${ch}: ${res === 'ok' ? 'sent' : res}`);
+    const ok = Object.values(r.results).every(v => v === 'ok');
+    msg.className = 'msg ' + (ok ? 'ok' : 'bad');
+    msg.textContent = parts.join(' · ');
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.message;
+  }
+});
+
 async function loadConfig() {
   const cfg = await api('/api/setup/config');
   printers = cfg.printers;
   $('allowed').value = cfg.allowed_users.join(', ');
   renderPrinters();
+  renderNotifications(cfg.notifications, cfg.channels);
 }
 
 loadConfig().catch(e => { $('save-msg').textContent = e.message; });

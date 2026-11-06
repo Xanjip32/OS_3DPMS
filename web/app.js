@@ -112,7 +112,7 @@ function buildTile(p) {
     } catch (e) { /* dashboard restarting */ }
     setTimeout(status, 5000);
   }
-  if (p.type === 'klipper') status();
+  status();
 
   // Upload: drag and drop, or file picker
   let depth = 0;
@@ -221,6 +221,41 @@ function notice(text) {
   grid.replaceChildren(el);
 }
 
+// ---------------------------------------------------------------- alerts
+// Print events (finished, failed, paused...) show as a toast, and as a system
+// pop-up when the browser allows notifications (needs HTTPS or localhost).
+const alertsBtn = document.getElementById('alerts');
+const canNotify = 'Notification' in window && window.isSecureContext;
+function updateAlertsButton() {
+  alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission !== 'default');
+}
+alertsBtn.addEventListener('click', async () => {
+  try { await Notification.requestPermission(); } catch (e) { /* ignored */ }
+  updateAlertsButton();
+});
+
+function popup(event) {
+  const bad = event.kind === 'error' || event.kind === 'offline';
+  toast(event.text, bad);
+  if (!canNotify || Notification.permission !== 'granted') return;
+  try {
+    new Notification(event.name, { body: event.text, tag: 'os3dpms-' + event.id });
+  } catch (e) { /* mobile browsers need a service worker; the toast is enough */ }
+}
+
+let eventCursor = null;
+async function pollEvents() {
+  try {
+    const r = await fetch(`/api/events?after=${eventCursor === null ? 0 : eventCursor}`);
+    if (r.ok) {
+      const data = await r.json();
+      if (eventCursor !== null) data.events.forEach(popup);   // skip old events on first load
+      eventCursor = data.last;
+    }
+  } catch (e) { /* dashboard restarting */ }
+  setTimeout(pollEvents, 5000);
+}
+
 async function start() {
   try {
     const me = await fetch('/api/me');
@@ -232,6 +267,8 @@ async function start() {
     if (!list.length) { notice('No printers yet. Add them on the setup page of the printer PC.'); return; }
     list.forEach(p => grid.appendChild(buildTile(p)));
     layout();
+    updateAlertsButton();
+    pollEvents();
   } catch (e) {
     notice('Cannot reach the dashboard server.');
   }

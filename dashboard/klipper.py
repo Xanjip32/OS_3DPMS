@@ -72,6 +72,8 @@ def status(p):
         "state": ps.get("state", "unknown"),
         "file": ps.get("filename", ""),
         "progress": ds.get("progress", 0) or 0,
+        "duration": ps.get("print_duration", 0) or 0,
+        "message": ps.get("message", "") or "",
     }
 
 

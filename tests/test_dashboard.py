@@ -23,7 +23,9 @@ def free_port():
         return s.getsockname()[1]
 
 
-class DashboardTest(unittest.TestCase):
+class ServerFixture(unittest.TestCase):
+    """Starts a fake printer and both dashboard listeners. Has no tests of its own."""
+
     @classmethod
     def setUpClass(cls):
         cls.printer = MockPrinter()
@@ -55,6 +57,7 @@ class DashboardTest(unittest.TestCase):
             fw.stop()
         for hub in cls.app.hubs.values():
             hub.stop()
+        cls.app.monitor.stop()
         cls.printer.shutdown()
         logging_handlers = [h for h in cls.app.audit_log.handlers]
         for h in logging_handlers:
@@ -80,6 +83,9 @@ class DashboardTest(unittest.TestCase):
         headers.update(extra or {})
         return self.request("POST", "/api/upload/voron?name=%s&print=0" % name, body, headers, **kw)
 
+
+
+class DashboardTest(ServerFixture):
     # ---------------------------------------------------------------- access
 
     def test_public_requires_tailscale_identity(self):
@@ -190,6 +196,7 @@ class DashboardTest(unittest.TestCase):
         self.assertTrue(data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9"))
 
     def test_status(self):
+        self.app.monitor.poll_once()
         resp, data = self.request("GET", "/api/status/voron")
         self.assertEqual(json.loads(data)["progress"], 0.42)
 

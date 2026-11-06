@@ -18,7 +18,17 @@ DEFAULTS = {
     "allowed_users": [],
     "require_tailscale_identity": True,
     "printers": [],
+    "notifications": {},
 }
+
+NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline")
+NOTIFY_DEFAULT_ON = ("complete", "error", "paused", "offline")
+NOTIFY_SECRETS = ("ntfy_url", "ntfy_token", "discord_webhook", "telegram_token")
+NTFY_RE = re.compile(r"^https://[A-Za-z0-9.\-]+(:\d+)?/[A-Za-z0-9_\-]{1,64}$")
+DISCORD_RE = re.compile(r"^https://(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)"
+                        r"/api/webhooks/\d+/[A-Za-z0-9_\-]+$")
+TELEGRAM_TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_\-]{30,}$")
+TELEGRAM_CHAT_RE = re.compile(r"^(-?\d{1,20}|@[A-Za-z0-9_]{4,})$")
 
 
 class ConfigError(ValueError):
@@ -118,7 +128,39 @@ def _validate(raw):
         p["flip_vertical"] = bool(p.get("flip_vertical", False))
         printers.append(p)
     cfg["printers"] = printers
+    cfg["notifications"] = _validate_notifications(cfg.get("notifications"))
     return cfg
+
+
+def _validate_notifications(raw):
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigError("notifications must be an object")
+    n = dict(raw)
+    events = n.get("events") if isinstance(n.get("events"), dict) else {}
+    n["events"] = {e: bool(events.get(e, e in NOTIFY_DEFAULT_ON)) for e in NOTIFY_EVENTS}
+    n["snapshot"] = bool(n.get("snapshot", False))
+    # Plain-text values are new input and must be checked. Encrypted ones were checked when saved.
+    checks = (("ntfy_url", NTFY_RE, "ntfy link must look like https://ntfy.sh/your-topic"),
+              ("discord_webhook", DISCORD_RE, "Discord webhook must be a https://discord.com/api/webhooks/... link"),
+              ("telegram_token", TELEGRAM_TOKEN_RE, "Telegram bot token looks wrong"))
+    for key, pattern, msg in checks:
+        value = str(n.get(key) or "").strip()
+        if value:
+            if not pattern.match(value):
+                raise ConfigError(msg)
+            n[key] = value
+        else:
+            n.pop(key, None)
+    token = str(n.get("ntfy_token") or "").strip()
+    if token and not re.match(r"^[A-Za-z0-9_\-]{8,128}$", token):
+        raise ConfigError("ntfy access token looks wrong")
+    chat = str(n.get("telegram_chat_id") or "").strip()
+    if chat and not TELEGRAM_CHAT_RE.match(chat):
+        raise ConfigError("Telegram chat id must be a number or @channel")
+    n["telegram_chat_id"] = chat
+    return n
 
 
 def protect_secrets(cfg):
@@ -126,12 +168,14 @@ def protect_secrets(cfg):
     if not winsecret.available():
         return False
     changed = False
-    for p in cfg["printers"]:
-        for field in SECRET_FIELDS:
-            value = p.get(field)
+    targets = [(p, SECRET_FIELDS) for p in cfg["printers"]]
+    targets.append((cfg.get("notifications") or {}, NOTIFY_SECRETS))
+    for obj, fields in targets:
+        for field in fields:
+            value = obj.get(field)
             if value:
-                p[field + "_protected"] = winsecret.protect(str(value))
-                del p[field]
+                obj[field + "_protected"] = winsecret.protect(str(value))
+                del obj[field]
                 changed = True
     return changed
 

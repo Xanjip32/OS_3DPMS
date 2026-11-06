@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+- Notifications when a print starts, finishes, fails, pauses, is cancelled, or a printer
+  stops answering while printing
+- Phone delivery through ntfy, Discord webhooks or Telegram bots, set up on the setup page,
+  with a "Send test" button and an optional camera picture
+- Pop-up alerts in the open dashboard (browser notifications)
+- Live status for Bambu Lab printers over MQTT (needs the serial number)
+- One background monitor polls the printers; the dashboard reads its cached status
+
 ## 1.0.0
 
 First public release.

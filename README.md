@@ -25,7 +25,9 @@ reachable from the internet.
 - Camera grid that fits the screen: 2×2 on a monitor, one row on an ultrawide, a single column on a phone
 - Click a camera to open that printer's full Mainsail page, through the same Tailscale door
 - Drag and drop G-code upload, with an optional "start print" (skipped when the printer is busy)
-- Print status and progress for Klipper printers
+- Print status and progress for Klipper and Bambu printers
+- Notifications when a print finishes, fails, pauses or a printer goes offline: pop-ups in the
+  dashboard, and on your phone through ntfy, Discord or Telegram
 - Per-camera rotation and mirroring
 - Guided setup page: Tailscale login, add printers, publish — no config files to edit
 - Python standard library only: no packages to install, small attack surface
@@ -64,8 +66,23 @@ works in Mainsail works here. If uploads fail with 401, add the printer PC to
 **Bambu Lab.** You need the LAN access code (printer screen: Settings → Network). Uploads
 go to the SD card, so a card must be inserted. To start prints remotely, also enter the
 serial number (Settings → Device) and send `.gcode.3mf` files exported from Bambu Studio or
-OrcaSlicer. Newer firmware may require *LAN Only Mode* / *Developer Mode* for third-party
+OrcaSlicer. The serial number also turns on live status and notifications for the printer. Newer firmware may require *LAN Only Mode* / *Developer Mode* for third-party
 tools, and future firmware updates may change this.
+
+## Notifications
+
+Set them up in step 4 of the setup page and click **Send test**.
+
+- **Dashboard pop-ups:** click **Enable alerts** at the top of the dashboard.
+- **ntfy** (free, no account): install the [ntfy app](https://ntfy.sh), click
+  *Make a private topic link* on the setup page, subscribe to that link in the app, and save.
+  The topic name works like a password, so keep it private.
+- **Discord:** channel settings → Integrations → Webhooks → New webhook → Copy URL.
+- **Telegram:** create a bot with @BotFather, send your bot a message, and enter the bot token
+  and your chat id (for example from @userinfobot).
+
+Choose which events notify you. "Attach a camera picture" is off by default, because the
+picture is then stored by the notification service.
 
 ## Configuration
 

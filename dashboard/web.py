@@ -24,7 +24,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, bambu, cameras, config, klipper, tailscale
+from . import __version__, bambu, cameras, config, klipper, monitor, notify, tailscale
 from .forward import Forwarder
 from .tlspin import PinStore
 
@@ -84,7 +84,12 @@ class App:
         self.hubs = {}
         self.upload_locks = {}
         self.forwarders = []
+        self.bambu_watchers = {}
+        self.monitor = None
+        self.notifier = notify.Notifier(self)
         self.reload()
+        self.monitor = monitor.Monitor(self)
+        self.monitor.start()
 
     def reload(self):
         cfg = config.load(self.config_path)
@@ -93,6 +98,14 @@ class App:
                 fw.stop()
             for hub in self.hubs.values():
                 hub.stop()
+            for watcher in self.bambu_watchers.values():
+                watcher.stop()
+            self.bambu_watchers = {}
+            for p in cfg["printers"]:
+                if p["type"] == "bambu" and p.get("serial"):
+                    watcher = bambu.BambuWatcher(p, self.pins)
+                    watcher.start()
+                    self.bambu_watchers[p["id"]] = watcher
             self.cfg = cfg
             self.printers = {p["id"]: p for p in cfg["printers"]}
             self.hubs = {pid: cameras.CameraHub(pid, self._camera_source(p))
@@ -132,7 +145,43 @@ class App:
             item["has_access_code"] = bool(p.get("access_code") or p.get("access_code_protected"))
             item["has_api_key"] = bool(p.get("api_key") or p.get("api_key_protected"))
             printers.append(item)
-        return {"allowed_users": self.cfg["allowed_users"], "printers": printers}
+        n = self.cfg["notifications"]
+        notifications = {
+            "events": n["events"], "snapshot": n["snapshot"],
+            "telegram_chat_id": n.get("telegram_chat_id", ""),
+        }
+        for field in config.NOTIFY_SECRETS:
+            notifications["has_" + field] = bool(n.get(field) or n.get(field + "_protected"))
+        return {"allowed_users": self.cfg["allowed_users"], "printers": printers,
+                "notifications": notifications, "channels": self.notifier.channels()}
+
+    def apply_notifications(self, payload):
+        """Save notification settings. Empty secret fields keep the saved value; clear_<field> removes it."""
+        if not isinstance(payload, dict):
+            raise config.ConfigError("bad request")
+        raw = config.read_raw(self.config_path)
+        prev = raw.get("notifications") if isinstance(raw.get("notifications"), dict) else {}
+        n = {
+            "events": payload.get("events") if isinstance(payload.get("events"), dict) else {},
+            "snapshot": bool(payload.get("snapshot")),
+            "telegram_chat_id": str(payload.get("telegram_chat_id") or "").strip(),
+        }
+        for field in config.NOTIFY_SECRETS:
+            value = str(payload.get(field) or "").strip()
+            if payload.get("clear_" + field):
+                continue
+            if value:
+                n[field] = value
+            elif prev.get(field + "_protected"):
+                n[field + "_protected"] = prev[field + "_protected"]
+            elif prev.get(field):
+                n[field] = prev[field]
+        raw["notifications"] = n
+        cfg = config.validate(raw)
+        config.protect_secrets(cfg)
+        config.save(self.config_path, cfg)
+        with self.lock:
+            self.cfg = dict(self.cfg, notifications=cfg["notifications"])
 
     def apply_setup(self, payload):
         if not isinstance(payload, dict) or not isinstance(payload.get("printers"), list):
@@ -317,6 +366,14 @@ class Handler(BaseHTTPRequestHandler):
                 if hub is None:
                     return self.send_json(404, {"error": "unknown printer"})
                 return self.send_snapshot(hub) if parts[0] == "snap" else self.send_stream(hub)
+            if path == "/api/events":
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                try:
+                    after = int(query.get("after", ["0"])[0])
+                except ValueError:
+                    after = 0
+                events, last = app.monitor.events_after(after)
+                return self.send_json(200, {"events": events[-50:], "last": last})
             if self.admin and path == "/api/setup/status":
                 return self.send_setup_status()
             if self.admin and path == "/api/setup/config":
@@ -343,6 +400,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"ok": False, "error": str(e)})
                 self.app.audit(user, "config-saved", printers=len(self.app.printers))
                 return self.send_json(200, {"ok": True})
+            if self.admin and path == "/api/setup/notifications":
+                try:
+                    self.app.apply_notifications(self.read_json())
+                except config.ConfigError as e:
+                    return self.send_json(400, {"ok": False, "error": str(e)})
+                self.app.audit(user, "notifications-saved", channels=self.app.notifier.channels())
+                return self.send_json(200, {"ok": True, "channels": self.app.notifier.channels()})
+            if self.admin and path == "/api/setup/notify-test":
+                event = self.app.monitor.test_event()
+                return self.send_json(200, {"results": self.app.notifier.deliver(event),
+                                            "channels": self.app.notifier.channels()})
             if self.admin and path == "/api/setup/login":
                 return self.send_json(200, tailscale.start_login())
             if self.admin and path == "/api/setup/publish":
@@ -364,12 +432,9 @@ class Handler(BaseHTTPRequestHandler):
         p = self.app.printers.get(pid)
         if p is None:
             return self.send_json(404, {"error": "unknown printer"})
-        if p["type"] != "klipper":
-            return self.send_json(200, {"state": None})
-        try:
-            self.send_json(200, klipper.status(p))
-        except Exception:
-            self.send_json(200, {"state": "offline"})
+        # The monitor polls every printer; serve its cached result.
+        st = self.app.monitor.status.get(pid) if self.app.monitor else None
+        self.send_json(200, st or {"state": None})
 
     def send_snapshot(self, hub):
         hub.touch()

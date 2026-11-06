@@ -5,15 +5,19 @@ need "LAN Only Mode" / "Developer Mode" for third-party tools.
 """
 import ftplib
 import json
+import logging
 import re
 import socket
 import ssl
 import struct
+import threading
 import time
 import uuid
 import zipfile
 
 from . import config, tlspin
+
+log = logging.getLogger("dashboard.bambu")
 
 
 class BambuFTPS(ftplib.FTP_TLS):
@@ -141,3 +145,175 @@ def upload(p, path, name, start, pins):
         return "Uploaded to %s SD card. Add its serial number in setup to start prints." % p["name"]
     start_print(p, path, name, pins)
     return "Uploaded to %s and print started" % p["name"]
+
+
+# ---------------------------------------------------------------- live status over MQTT
+
+STATE_MAP = {"RUNNING": "printing", "PREPARE": "printing", "SLICING": "printing",
+             "PAUSE": "paused", "FINISH": "complete", "FAILED": "error", "IDLE": "standby"}
+
+
+class BambuWatcher(threading.Thread):
+    """Keeps an MQTT connection to the printer and the latest print report."""
+
+    PING_SECONDS = 30
+    PUSHALL_SECONDS = 600
+
+    def __init__(self, p, pins):
+        super().__init__(daemon=True, name="bambu-%s" % p["id"])
+        self.p = p
+        self.pins = pins
+        self.report = {}
+        self.lock = threading.Lock()
+        self.connected = False
+        self.last_report = 0.0
+        self.stopped = threading.Event()
+        self.sock = None
+        self.buf = bytearray()
+
+    def stop(self):
+        self.stopped.set()
+        sock = self.sock
+        if sock:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def status(self):
+        """Same shape as klipper.status(), or None when the printer is unreachable."""
+        with self.lock:
+            r = dict(self.report)
+            fresh = self.connected or time.time() - self.last_report < 60
+        if not r or not fresh:
+            return None
+        return {
+            "state": STATE_MAP.get(str(r.get("gcode_state", "")).upper(), "standby"),
+            "file": r.get("subtask_name") or r.get("gcode_file") or "",
+            "progress": (r.get("mc_percent") or 0) / 100.0,
+            "remaining_min": r.get("mc_remaining_time") or 0,
+            "message": ("error code %s" % r["print_error"]) if r.get("print_error") else "",
+        }
+
+    def run(self):
+        while not self.stopped.is_set():
+            try:
+                self._session()
+            except Exception as e:
+                log.info("bambu %s status: %s", self.p["id"], e)
+            self.connected = False
+            self.stopped.wait(10)
+
+    def _send(self, data):
+        self.sock.sendall(data)
+
+    def _session(self):
+        p = self.p
+        topic_report = ("device/%s/report" % p["serial"]).encode()
+        topic_request = ("device/%s/request" % p["serial"]).encode()
+        self.buf = bytearray()
+        with tlspin.connect(p["host"], 8883, self.pins, timeout=15) as s:
+            self.sock = s
+            var = _s16(b"MQTT") + bytes([4, 0xC2]) + struct.pack(">H", 60)
+            body = (_s16(("os3dpms-w-" + uuid.uuid4().hex[:8]).encode())
+                    + _s16(b"bblp") + _s16(config.secret(p, "access_code").encode()))
+            self._send(bytes([0x10]) + _remaining(len(var) + len(body)) + var + body)
+            pkt = self._next_packet(s, wait=15)
+            if pkt is None:
+                raise ConnectionError("printer did not answer MQTT login")
+            kind, ack = pkt
+            if kind >> 4 != 2 or len(ack) < 2 or ack[1] != 0:
+                raise RuntimeError("printer refused MQTT login")
+            sub = struct.pack(">H", 1) + _s16(topic_report) + b"\x00"
+            self._send(bytes([0x82]) + _remaining(len(sub)) + sub)
+            self._pushall(topic_request)
+            self.connected = True
+            last_ping = last_push = time.time()
+            s.settimeout(2)
+            while not self.stopped.is_set():
+                now = time.time()
+                if now - last_ping > self.PING_SECONDS:
+                    self._send(b"\xc0\x00")
+                    last_ping = now
+                if now - last_push > self.PUSHALL_SECONDS:
+                    self._pushall(topic_request)
+                    last_push = now
+                pkt = self._next_packet(s, wait=0)
+                if pkt and pkt[0] >> 4 == 3:
+                    self._on_publish(pkt[0], pkt[1])
+
+    def _pushall(self, topic):
+        msg = json.dumps({"pushing": {"sequence_id": "0", "command": "pushall"}}).encode()
+        pub = _s16(topic) + msg
+        self._send(bytes([0x30]) + _remaining(len(pub)) + pub)
+
+    def _next_packet(self, s, wait):
+        """Return (first byte, body) of the next MQTT packet, or None on a read timeout."""
+        deadline = time.time() + wait
+        while True:
+            pkt = _parse_packet(self.buf)
+            if pkt:
+                return pkt
+            try:
+                data = s.recv(65536)
+            except socket.timeout:
+                if time.time() >= deadline:
+                    return None
+                continue
+            if not data:
+                raise ConnectionError("printer closed the connection")
+            self.buf += data
+            if len(self.buf) > 4_000_000:
+                raise ConnectionError("MQTT message too large")
+
+    def _on_publish(self, first, body):
+        qos = (first >> 1) & 3
+        tlen = struct.unpack(">H", body[:2])[0]
+        payload = body[2 + tlen + (2 if qos else 0):]
+        try:
+            data = json.loads(payload.decode("utf-8", "replace"))
+        except ValueError:
+            return
+        report = data.get("print") if isinstance(data, dict) else None
+        if isinstance(report, dict):
+            with self.lock:
+                self.report.update(report)
+                self.last_report = time.time()
+
+
+def _s16(b):
+    return struct.pack(">H", len(b)) + b
+
+
+def _remaining(n):
+    out = bytearray()
+    while True:
+        digit = n % 128
+        n //= 128
+        out.append(digit | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _parse_packet(buf):
+    """Pop one complete MQTT packet from buf, or return None if it is incomplete."""
+    if len(buf) < 2:
+        return None
+    length, mult, i = 0, 1, 1
+    while True:
+        if i >= len(buf):
+            return None
+        digit = buf[i]
+        length += (digit & 0x7F) * mult
+        i += 1
+        if not digit & 0x80:
+            break
+        mult *= 128
+        if i > 4:
+            raise ConnectionError("bad MQTT packet length")
+    if len(buf) < i + length:
+        return None
+    first = buf[0]
+    body = bytes(buf[i:i + length])
+    del buf[:i + length]
+    return first, body
