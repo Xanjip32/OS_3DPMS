@@ -108,3 +108,10 @@ ul.ports { margin: 6px 0; padding-left: 18px; color: var(--muted); }
   .view .open { opacity: 1; }
   #toasts { left: 8px; right: 8px; }
 }
+
+/* ---------------------------------------------------------------- installed app */
+/* Keep content clear of the phone notch and home bar when opened from the home screen. */
+header { padding-top: max(12px, env(safe-area-inset-top));
+         padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+main.grid { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+@media (display-mode: standalone) { header .hint { display: none; } }

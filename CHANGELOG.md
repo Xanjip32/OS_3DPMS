@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+- The dashboard installs as an app on Windows, Mac, Android and iPhone (web app manifest,
+  icons, service worker). "Install app" button in the dashboard header
+- Installed app shows a clear "connect Tailscale" page when the printer PC cannot be reached
+- Phone pop-up alerts go through the service worker, so they work on Android too
+- Layout respects the phone notch and home bar
+
 ## 1.2.0
 
 - "Install Tailscale" button on the setup page (Windows): downloads the official MSI,

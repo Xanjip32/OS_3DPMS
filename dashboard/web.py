@@ -36,6 +36,9 @@ HTML, JS, CSS = "text/html; charset=utf-8", "text/javascript; charset=utf-8", "t
 PUBLIC_FILES = {
     "/": ("index.html", HTML), "/index.html": ("index.html", HTML),
     "/app.js": ("app.js", JS), "/app.css": ("app.css", CSS),
+    "/sw.js": ("sw.js", JS), "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/icon-192.png": ("icon-192.png", "image/png"), "/icon-512.png": ("icon-512.png", "image/png"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
 ADMIN_FILES = {"/setup": ("setup.html", HTML), "/setup.js": ("setup.js", JS)}
 UPLOAD_EXTENSIONS = (".gcode", ".gco", ".g", ".3mf")

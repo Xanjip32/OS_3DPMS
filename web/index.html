@@ -2,14 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Printer Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Printers</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Printers">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <header>
   <h1>Printers</h1>
   <span class="hint">Click a camera to open the printer. Drag a .gcode file onto a printer to send it.</span>
+  <button id="install" class="hidden" title="Install as an app on this device">Install app</button>
   <button id="alerts" class="hidden" title="Show a pop-up when a print finishes or fails">Enable alerts</button>
   <span class="who" id="who"></span>
 </header>

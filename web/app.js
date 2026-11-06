@@ -234,13 +234,46 @@ alertsBtn.addEventListener('click', async () => {
   updateAlertsButton();
 });
 
+// ---------------------------------------------------------------- installed app
+let swReg = null;
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').then(r => { swReg = r; }).catch(() => {});
+}
+const installBtn = document.getElementById('install');
+const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installPrompt = e;
+  installBtn.classList.remove('hidden');
+});
+window.addEventListener('appinstalled', () => installBtn.classList.add('hidden'));
+if (isIOS && !standalone) installBtn.classList.remove('hidden');
+installBtn.addEventListener('click', async () => {
+  if (installPrompt) {
+    installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => null);
+    installPrompt = null;
+    installBtn.classList.add('hidden');
+  } else if (isIOS) {
+    toast('In Safari: tap the Share button (square with arrow), then "Add to Home Screen".');
+  }
+});
+
 function popup(event) {
   const bad = event.kind === 'error' || event.kind === 'offline';
   toast(event.text, bad);
   if (!canNotify || Notification.permission !== 'granted') return;
+  const opts = { body: event.text, tag: 'os3dpms-' + event.id, icon: '/icon-192.png' };
+  if (swReg) {
+    swReg.showNotification(event.name, opts).catch(() => {});   // works on phones too
+    return;
+  }
   try {
-    new Notification(event.name, { body: event.text, tag: 'os3dpms-' + event.id });
-  } catch (e) { /* mobile browsers need a service worker; the toast is enough */ }
+    new Notification(event.name, opts);
+  } catch (e) { /* the toast is enough */ }
 }
 
 let eventCursor = null;

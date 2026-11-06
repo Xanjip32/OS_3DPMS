@@ -50,6 +50,19 @@ reachable from the internet.
 
 To stop: `stop.bat`. To remove: `uninstall.bat`.
 
+### Install as an app (PC, iPhone, Android)
+
+The dashboard installs like an app: its own window or full screen, with an icon, and no address bar.
+Every device needs the Tailscale app connected and signed in to the same account.
+
+- **Windows / Mac (Chrome or Edge):** open the dashboard link, click **Install app** at the top
+  (or the install icon in the address bar). It appears in the Start menu and taskbar.
+- **Android (Chrome):** open the link, tap **Install app** (or menu ⋮ → *Install app*).
+- **iPhone / iPad (Safari):** open the link in **Safari**, tap **Share** (square with arrow),
+  then **Add to Home Screen** → **Add**. Other iPhone browsers cannot install it.
+
+If the app shows "Can't reach your printers", open Tailscale and connect.
+
 ### Linux / macOS
 
 ```bash
