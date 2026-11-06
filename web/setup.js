@@ -50,21 +50,55 @@ async function refresh() {
   const ts = st.tailscale;
   const body = $('ts-body');
   tsRunning = ts.state === 'Running';
-  const tsKey = [ts.installed, ts.state, ts.user, ts.dns_name].join('|');
-  if (tsKey !== lastTsKey) { lastTsKey = tsKey; body.replaceChildren(); renderTailscale(ts, body); }
+  const inst = st.install || {};
+  const tsKey = [ts.installed, ts.state, ts.user, ts.dns_name, inst.state, inst.detail].join('|');
+  if (tsKey !== lastTsKey) { lastTsKey = tsKey; body.replaceChildren(); renderTailscale(ts, body, inst); }
   renderPublish(st);
 }
 
 let lastTsKey = '';
 
-function renderTailscale(ts, body) {
-  if (!ts.installed) {
-    setState('ts-state', 'not installed', 'todo');
+const INSTALL_BUSY = ['downloading', 'verifying', 'installing', 'starting'];
+
+function renderInstall(ts, body, inst) {
+  setState('ts-state', 'not installed', 'todo');
+  const again = el('button', { text: 'Check again', onclick: () => { lastTsKey = ''; refresh(); } });
+  if (!inst.supported) {
     body.append(
       el('p', { text: 'Install Tailscale on this PC, then click "Check again".' }),
-      el('div', { class: 'actions' },
-        link(ts.download_url || 'https://tailscale.com/download', 'Download Tailscale', true),
-        el('button', { text: 'Check again', onclick: () => { lastTsKey = ''; refresh(); } })));
+      el('div', { class: 'actions' }, link(ts.download_url || 'https://tailscale.com/download', 'Download Tailscale', true), again));
+    return;
+  }
+  if (INSTALL_BUSY.includes(inst.state)) {
+    setState('ts-state', 'installing…', 'todo');
+    body.append(el('p', { class: 'msg', text: inst.detail || 'Installing…' }));
+    return;
+  }
+  const msg = el('span', { class: inst.state === 'failed' ? 'msg bad' : 'msg', text: inst.state === 'failed' ? inst.detail : '' });
+  const btn = el('button', {
+    class: 'primary', text: 'Install Tailscale', onclick: async () => {
+      btn.disabled = true;
+      msg.className = 'msg';
+      msg.textContent = 'Starting…';
+      try {
+        const r = await api('/api/setup/install-tailscale', {});
+        if (!r.ok) msg.textContent = r.error || 'Could not start the install.';
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+      lastTsKey = '';
+      refresh();
+    },
+  });
+  body.append(
+    el('p', { text: 'OS_3DPMS downloads the official Tailscale installer, checks it is signed by Tailscale Inc., '
+      + 'and installs it. Windows asks once for permission (click Yes).' }),
+    el('div', { class: 'actions' }, btn, again, msg));
+}
+
+function renderTailscale(ts, body, inst) {
+  if (!ts.installed) {
+    renderInstall(ts, body, inst);
   } else if (tsRunning) {
     setState('ts-state', 'connected', 'ok');
     body.append(el('p', { text: `Signed in as ${ts.user || 'your account'}. This PC is ${ts.dns_name}.` }));
@@ -83,7 +117,8 @@ function renderTailscale(ts, body) {
           const r = await api('/api/setup/login', {});
           if (r.auth_url) {
             window.open(r.auth_url, '_blank', 'noopener');
-            msg.textContent = 'Finish signing in in the new tab. This page updates by itself.';
+            msg.replaceChildren('Finish signing in in the new tab. This page updates by itself. No tab? ',
+              link(r.auth_url, 'Open sign-in page', true));
           } else if (r.already) {
             msg.textContent = '';
           } else {
@@ -95,7 +130,8 @@ function renderTailscale(ts, body) {
         btn.disabled = false;
       },
     });
-    body.append(el('p', { text: 'Sign in with the same account you use on your other devices.' }),
+    body.append(el('p', { text: 'Click the button. Tailscale opens its own sign-in page (Google, Microsoft, GitHub or Apple). '
+      + 'Use the same account as on your other devices. Your password goes only to that page, never to OS_3DPMS.' }),
       el('div', { class: 'actions' }, btn, msg));
   }
 }

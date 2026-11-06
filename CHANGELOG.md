@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+- "Install Tailscale" button on the setup page (Windows): downloads the official MSI,
+  verifies the Tailscale Inc. signature, installs silently after one Windows prompt
+- `install.bat` uses the same verified installer instead of winget for Tailscale
+- `run.py --install-tailscale` for scripted installs
+- Sign-in and approval links are limited to `https://*.tailscale.com`; a fallback link
+  appears when the browser blocks the sign-in tab
+
 ## 1.1.0
 
 - Notifications when a print starts, finishes, fails, pauses, is cancelled, or a printer

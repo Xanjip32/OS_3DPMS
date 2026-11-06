@@ -36,10 +36,13 @@ reachable from the internet.
 
 1. On the PC that sits next to the printers (it must reach their IPs), download this repository:
    **Code → Download ZIP**, and extract it, for example to `C:\OS_3DPMS`.
-2. Double-click **`install.bat`**. It installs Python and Tailscale with `winget` if they are
-   missing, sets OS_3DPMS to start at login, and opens the setup page.
+2. Double-click **`install.bat`**. It installs Python (with `winget`) and Tailscale if they are
+   missing, sets OS_3DPMS to start at login, and opens the setup page. Tailscale is downloaded
+   from `pkgs.tailscale.com`, checked to be signed by Tailscale Inc., and installed silently;
+   Windows asks for permission once.
 3. Follow the setup page (`http://127.0.0.1:8079/setup`):
-   1. **Log in to Tailscale.**
+   1. **Install Tailscale** (only if step 2 could not) and **Log in to Tailscale**. The login
+      opens Tailscale's own sign-in page; your password never passes through OS_3DPMS.
    2. **Add your printers** (IP address; Bambu printers also need the LAN access code).
    3. **Publish.** The first time, Tailscale asks you to enable HTTPS for your tailnet (one click).
    4. Copy the link, for example `https://printer-pc.tail1234.ts.net/`.

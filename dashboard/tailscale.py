@@ -47,6 +47,13 @@ def _run(args, timeout=15):
     return proc.returncode, out.decode("utf-8", "replace"), timed_out
 
 
+def safe_url(url):
+    """Only pass on https links to Tailscale's own sites."""
+    url = url or ""
+    host = url[8:].split("/", 1)[0] if url.startswith("https://") else ""
+    return url if host == "tailscale.com" or host.endswith(".tailscale.com") else ""
+
+
 def status():
     if not find_cli():
         return {"installed": False, "state": "NotInstalled", "download_url": DOWNLOAD_URL}
@@ -64,7 +71,7 @@ def status():
         "installed": True,
         "state": data.get("BackendState", "Unknown"),
         "dns_name": (me.get("DNSName") or "").rstrip("."),
-        "auth_url": data.get("AuthURL") or "",
+        "auth_url": safe_url(data.get("AuthURL")),
         "user": user,
         "version": data.get("Version", ""),
     }
@@ -92,7 +99,7 @@ def start_login(wait=20):
         def reader():
             for raw in proc.stdout:
                 m = URL_RE.search(raw.decode("utf-8", "replace"))
-                if m and "tailscale.com" in m.group(0) and not found["url"]:
+                if m and safe_url(m.group(0)) and not found["url"]:
                     found["url"] = m.group(0)
 
         threading.Thread(target=reader, daemon=True).start()
@@ -142,7 +149,7 @@ def publish(mappings):
             continue
         action = ""
         for url in URL_RE.findall(out):
-            if "login.tailscale.com" in url:
+            if safe_url(url):
                 action = url
                 break
         results.append({"port": https_port, "ok": False, "action_url": action,

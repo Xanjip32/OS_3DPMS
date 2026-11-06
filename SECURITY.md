@@ -32,6 +32,8 @@ a user's browser, and the printers' network traffic.
 | Path traversal in file names | File names are reduced to a safe base name; only `.gcode`, `.gco`, `.g` and `.3mf` are accepted. |
 | Resource exhaustion | Upload size limit, one upload per printer at a time, connection cap, 60 s socket timeout, camera frame size limit. |
 | Starting a print on a busy printer | Klipper status is checked first; the print is not started while printing or paused. |
+| Fake Tailscale installer | Downloaded over HTTPS from `pkgs.tailscale.com` only (redirects elsewhere are refused). The MSI runs only if Windows Authenticode reports a valid signature from `O=Tailscale Inc.`. Install is only reachable from the local setup page. |
+| Fake sign-in link | Only `https://` links on `tailscale.com` are shown as sign-in or approval links. |
 | Notifications used to call arbitrary URLs (SSRF) | Only https ntfy links, `discord.com` webhooks and the Telegram API are accepted. |
 | Notification secrets leaked | ntfy links/tokens, Discord webhooks and Telegram tokens are DPAPI-encrypted and never returned to the browser. |
 | Camera pictures leaving the network | Attaching pictures to notifications is off by default and labelled on the setup page. |

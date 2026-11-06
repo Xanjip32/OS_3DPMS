@@ -24,7 +24,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, bambu, cameras, config, klipper, monitor, notify, tailscale
+from . import __version__, bambu, cameras, config, klipper, monitor, notify, tailscale, tsinstall
 from .forward import Forwarder
 from .tlspin import PinStore
 
@@ -411,6 +411,10 @@ class Handler(BaseHTTPRequestHandler):
                 event = self.app.monitor.test_event()
                 return self.send_json(200, {"results": self.app.notifier.deliver(event),
                                             "channels": self.app.notifier.channels()})
+            if self.admin and path == "/api/setup/install-tailscale":
+                result = tsinstall.start()
+                self.app.audit(user, "tailscale-install", result=result)
+                return self.send_json(200, result)
             if self.admin and path == "/api/setup/login":
                 return self.send_json(200, tailscale.start_login())
             if self.admin and path == "/api/setup/publish":
@@ -471,6 +475,7 @@ class Handler(BaseHTTPRequestHandler):
         dns = ts.get("dns_name", "")
         self.send_json(200, {
             "tailscale": ts,
+            "install": dict(tsinstall.state(), supported=tsinstall.supported()),
             "published": published,
             "public_url": "https://%s/" % dns if dns else "",
             "printers": len(self.app.printers),
@@ -570,7 +575,19 @@ def main(argv=None):
     parser.add_argument("--config", default=os.path.join(ROOT, "config.json"))
     parser.add_argument("--data-dir", default=ROOT, help="where logs, pins and temp files go")
     parser.add_argument("--open-setup", action="store_true", help="open the setup page in a browser")
+    parser.add_argument("--install-tailscale", action="store_true",
+                        help="download, verify and install Tailscale (Windows), then exit")
     args = parser.parse_args(argv)
+
+    if args.install_tailscale:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        result = tsinstall.start(background=False)
+        if result.get("already"):
+            print("Tailscale is already installed.")
+            return 0
+        st = tsinstall.state()
+        print(st["detail"] or result.get("error", ""))
+        return 0 if st["state"] == "done" else 1
 
     os.makedirs(args.data_dir, exist_ok=True)
     setup_logging(args.data_dir)

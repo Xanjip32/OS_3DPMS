@@ -31,12 +31,11 @@ where tailscale >nul 2>nul && set "HAVE_TS=1"
 if defined HAVE_TS (
   echo [2/4] Tailscale found.
 ) else (
-  echo [2/4] Tailscale not found.
-  where winget >nul 2>nul && (
-    echo       Installing Tailscale with winget. Windows may ask for permission.
-    winget install -e --id Tailscale.Tailscale --accept-package-agreements --accept-source-agreements
-  ) || (
-    echo       Install it from https://tailscale.com/download and run install.bat again.
+  echo [2/4] Tailscale not found. Installing it now.
+  echo       Downloading the official installer and checking its signature.
+  echo       Windows asks for permission once: click Yes.
+  %PY% "%~dp0run.py" --install-tailscale || (
+    echo       Tailscale was not installed. You can retry from the setup page.
   )
 )
 
