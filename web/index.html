@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Printer Dashboard</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>Printers</h1>
+  <span class="hint">Click a camera to open the printer. Drag a .gcode file onto a printer to send it.</span>
+  <span class="who" id="who"></span>
+</header>
+<main class="grid" id="grid"></main>
+
+<div id="modal">
+  <div class="mtop">
+    <span class="name" id="mname"></span><span class="grow"></span>
+    <button id="mopen">Open Mainsail</button><button id="mclose">Close (Esc)</button>
+  </div>
+  <img id="mimg" alt="">
+</div>
+<div id="toasts"></div>
+
+<template id="tile-template">
+  <section class="tile nocam">
+    <div class="top"><span class="name"></span><span class="chip"></span></div>
+    <div class="view">
+      <img alt="">
+      <div class="nocam">Connecting to camera…</div>
+      <span class="open"></span>
+    </div>
+    <div class="progress"><div></div></div>
+    <div class="file"></div>
+    <div class="bar">
+      <button class="send">Send G-code…</button>
+      <span class="grow"></span>
+      <button class="live">Fullscreen</button>
+      <button class="ui">Mainsail</button>
+    </div>
+    <div class="drop"></div>
+    <div class="confirm">
+      <div>Send to <b class="target"></b>:</div>
+      <div class="fname"></div>
+      <label><input type="checkbox" class="start"> Start print after upload</label>
+      <div class="warn hidden">Check that the bed is clear before starting a print remotely.</div>
+      <div class="row"><button class="primary go">Send</button><button class="cancel">Cancel</button></div>
+    </div>
+    <input type="file" accept=".gcode,.gco,.g,.3mf" hidden>
+  </section>
+</template>
+
+<script src="/app.js"></script>
+</body>
+</html>

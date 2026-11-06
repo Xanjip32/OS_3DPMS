@@ -1,0 +1,32 @@
+{
+  "port": 8080,
+  "admin_port": 8079,
+  "max_upload_mb": 1024,
+  "allowed_users": [],
+  "printers": [
+    {
+      "id": "voron-500",
+      "name": "Voron 500",
+      "type": "klipper",
+      "host": "192.168.1.21",
+      "ui_port": 8101
+    },
+    {
+      "id": "sapphire-pro",
+      "name": "Sapphire Pro",
+      "type": "klipper",
+      "host": "192.168.1.22",
+      "ui_port": 8102,
+      "rotate": 180
+    },
+    {
+      "id": "p1s",
+      "name": "Bambu P1S",
+      "type": "bambu",
+      "host": "192.168.1.6",
+      "access_code": "YOUR-ACCESS-CODE",
+      "serial": "",
+      "use_ams": false
+    }
+  ]
+}
