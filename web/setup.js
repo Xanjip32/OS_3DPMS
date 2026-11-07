@@ -3,6 +3,7 @@
 const $ = id => document.getElementById(id);
 let tsRunning = false;
 let printers = [];
+const editedPrinters = new WeakSet();
 
 async function api(path, body) {
   const opts = body === undefined ? {} : {
@@ -38,7 +39,7 @@ function link(href, text, primary) {
   return el('a', { class: 'btn' + (primary ? ' primary' : ''), href, target: '_blank', rel: 'noopener', text });
 }
 
-// ---------------------------------------------------------------- step 1 + 3 + 4
+// ---------------------------------------------------------------- remote access
 async function refresh() {
   let st;
   try {
@@ -51,7 +52,7 @@ async function refresh() {
   const body = $('ts-body');
   tsRunning = ts.state === 'Running';
   const inst = st.install || {};
-  const tsKey = [ts.installed, ts.state, ts.user, ts.dns_name, inst.state, inst.detail].join('|');
+  const tsKey = [ts.installed, ts.state, ts.user, ts.detail, inst.state, inst.detail].join('|');
   if (tsKey !== lastTsKey) { lastTsKey = tsKey; body.replaceChildren(); renderTailscale(ts, body, inst); }
   renderPublish(st);
 }
@@ -91,9 +92,9 @@ function renderInstall(ts, body, inst) {
     },
   });
   body.append(
-    el('p', { text: 'OS_3DPMS downloads the official Tailscale installer, checks it is signed by Tailscale Inc., '
-      + 'and installs it. Windows asks once for permission (click Yes).' }),
-    el('div', { class: 'actions' }, btn, again, msg));
+    el('p', { text: 'Install Tailscale on this PC. Windows will ask for permission.' }),
+    el('div', { class: 'actions' }, btn, again, msg),
+    inst.state === 'failed' ? link(ts.download_url, 'Download from Tailscale') : '');
 }
 
 function renderTailscale(ts, body, inst) {
@@ -101,12 +102,8 @@ function renderTailscale(ts, body, inst) {
     renderInstall(ts, body, inst);
   } else if (tsRunning) {
     setState('ts-state', 'connected', 'ok');
-    body.append(el('p', { text: `Signed in as ${ts.user || 'your account'}. This PC is ${ts.dns_name}.` }));
-  } else if (ts.state === 'Error') {
-    setState('ts-state', 'error', 'todo');
-    body.append(el('p', { class: 'msg bad', text: ts.detail || 'Tailscale is not responding. Start the Tailscale app.' }),
-      el('div', { class: 'actions' }, el('button', { text: 'Check again', onclick: refresh })));
-  } else {
+    body.append(el('p', { text: `Signed in as ${ts.user || 'your account'}.` }));
+  } else if (ts.state === 'NeedsLogin') {
     setState('ts-state', 'sign in needed', 'todo');
     const msg = el('span', { class: 'msg' });
     const btn = el('button', {
@@ -117,7 +114,7 @@ function renderTailscale(ts, body, inst) {
           const r = await api('/api/setup/login', {});
           if (r.auth_url) {
             window.open(r.auth_url, '_blank', 'noopener');
-            msg.replaceChildren('Finish signing in in the new tab. This page updates by itself. No tab? ',
+            msg.replaceChildren('Finish signing in in the new tab. ',
               link(r.auth_url, 'Open sign-in page', true));
           } else if (r.already) {
             msg.textContent = '';
@@ -130,15 +127,25 @@ function renderTailscale(ts, body, inst) {
         btn.disabled = false;
       },
     });
-    body.append(el('p', { text: 'Click the button. Tailscale opens its own sign-in page (Google, Microsoft, GitHub or Apple). '
-      + 'Use the same account as on your other devices. Your password goes only to that page, never to OS_3DPMS.' }),
+    body.append(el('p', { text: 'Use the same Tailscale account on the devices you want to connect.' }),
       el('div', { class: 'actions' }, btn, msg));
+  } else {
+    const states = {
+      Stopped: ['Disconnected', 'Open Tailscale on this PC and choose Connect.'],
+      Starting: ['Connecting…', 'Waiting for Tailscale to connect.'],
+      NoState: ['Starting…', 'Waiting for Tailscale to start.'],
+      NeedsMachineAuth: ['Approval needed', 'Approve this PC in your Tailscale admin console.'],
+    };
+    const [label, detail] = states[ts.state] || ['Check Tailscale', ts.detail || 'Open Tailscale and check its connection.'];
+    setState('ts-state', label, 'todo');
+    body.append(el('p', { text: detail }),
+      el('div', { class: 'actions' }, el('button', { text: 'Check again', onclick: refresh })));
   }
 }
 
 function renderPublish(st) {
-  // Step 3: publish status
   const ports = $('ports');
+  $('publish-details').hidden = !tsRunning;
   ports.replaceChildren();
   const entries = Object.entries(st.published);
   for (const [port, ok] of entries) {
@@ -146,19 +153,21 @@ function renderPublish(st) {
     ports.append(el('li', { text: `${ok ? '✓' : '✗'} ${what}` }));
   }
   const allPublished = entries.length > 0 && entries.every(([, ok]) => ok);
-  setState('pub-state', !tsRunning ? 'needs step 1' : allPublished ? 'published' : 'not published', allPublished ? 'ok' : 'todo');
+  setState('pub-state', allPublished ? 'Published' : 'Local only', allPublished ? 'ok' : '');
   $('publish').disabled = !tsRunning;
 
-  // Step 4
   const done = $('done-body');
   if (tsRunning && allPublished && st.public_url) {
+    if (done.dataset.url === st.public_url) return;
+    done.dataset.url = st.public_url;
     const copy = el('button', { text: 'Copy link', onclick: () => navigator.clipboard.writeText(st.public_url) });
     done.replaceChildren(
-      el('p', { text: 'On any device signed in to the same Tailscale account, open:' }),
-      el('div', { class: 'actions' }, el('span', { class: 'url', text: st.public_url }), copy, link(st.public_url, 'Open', true)),
-      el('p', { text: 'Bookmark it. Phones work too: install the Tailscale app and sign in.' }));
+      el('p', { text: 'Dashboard link' }),
+      el('a', { class: 'url', href: st.public_url, text: st.public_url }),
+      el('div', { class: 'actions' }, copy));
   } else {
-    done.replaceChildren(el('p', { text: 'Finish steps 1–3 first.' }));
+    delete done.dataset.url;
+    done.replaceChildren();
   }
 }
 
@@ -187,7 +196,26 @@ $('publish').addEventListener('click', async () => {
   refresh();
 });
 
-// ---------------------------------------------------------------- step 2: printers
+$('save-allowed').addEventListener('click', async () => {
+  const button = $('save-allowed');
+  const msg = $('allowed-msg');
+  const allowed = $('allowed').value.split(',').map(s => s.trim()).filter(Boolean);
+  button.disabled = true;
+  msg.className = 'msg';
+  msg.textContent = 'Saving…';
+  try {
+    await api('/api/setup/config', { allowed_users: allowed });
+    msg.className = 'msg ok';
+    msg.textContent = 'Allowed accounts saved.';
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------- printers
 function slug(text) {
   return (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'printer';
 }
@@ -203,10 +231,12 @@ function field(label, input) {
   return el('label', { class: 'field' }, label, input);
 }
 
-function renderPrinters() {
+function renderPrinters(checkIds = new Set()) {
   const list = $('printer-list');
   list.replaceChildren();
-  if (!printers.length) list.append(el('p', { text: 'No printers yet. Add one below.' }));
+  if (!printers.length) list.append(el('div', { class: 'printer-empty' },
+    el('strong', { text: 'No printers yet' }),
+    el('p', { text: 'Choose the type of printer you want to add.' })));
   printers.forEach((p, i) => {
     const bind = (key, input, kind) => {
       const read = () => (kind === 'bool' ? input.checked : kind === 'int' ? Number(input.value) || 0 : input.value.trim());
@@ -216,29 +246,79 @@ function renderPrinters() {
       return input;
     };
     const rotate = el('select', {}, ...[0, 90, 180, 270].map(d => el('option', { value: String(d), text: `${d}°` })));
+    const fields = el('div', { class: 'field-grid' },
+      field('Printer name', bind('name', el('input', { placeholder: p.type === 'bambu' ? 'Bambu P1S' : 'Voron 500' }))),
+      field('IP address or hostname', bind('host', el('input', {
+        name: 'host', placeholder: '192.168.0.23', spellcheck: 'false', autocomplete: 'off',
+      }))));
+    const advanced = el('div', { class: 'field-grid' });
     const row = el('div', { class: 'printer-row' },
-      el('div', { class: 'kind' }, p.type === 'bambu' ? 'Bambu Lab' : 'Klipper / Mainsail',
-        el('button', { text: 'Remove', onclick: () => { printers.splice(i, 1); renderPrinters(); } })),
-      field('Name', bind('name', el('input', { placeholder: 'Voron 500' }))),
-      field('IP address', bind('host', el('input', { placeholder: '192.168.1.21' }))),
-      field('Camera rotation', bind('rotate', rotate, 'int')));
+      el('div', { class: 'kind' }, el('span', { text: p.type === 'bambu' ? 'Bambu Lab' : 'Klipper / Mainsail' }),
+        el('button', { class: 'quiet', text: 'Remove', onclick: () => { printers.splice(i, 1); renderPrinters(); } })),
+      fields,
+      el('details', { class: 'printer-advanced' }, el('summary', { text: 'Advanced settings' }), advanced));
 
     if (p.type === 'klipper') {
-      row.append(field('Mainsail port (tailnet)', bind('ui_port', el('input', { type: 'number', min: '1024', max: '65535' }), 'int')));
-      row.append(field('Moonraker API key (optional)', bind('api_key', el('input', {
+      advanced.append(field('Printer HTTP port', bind('http_port', el('input', { type: 'number', min: '1', max: '65535', placeholder: '80' }))));
+      advanced.append(field('Mainsail port (Tailscale)', bind('ui_port', el('input', { type: 'number', min: '1024', max: '65535' }))));
+      advanced.append(field('Moonraker API key', bind('api_key', el('input', {
         type: 'password', autocomplete: 'off', placeholder: p.has_api_key ? 'saved (leave empty to keep)' : 'only if Moonraker needs it',
       }))));
     } else {
-      row.append(field('LAN access code', bind('access_code', el('input', {
+      fields.append(field('LAN access code', bind('access_code', el('input', {
         type: 'password', autocomplete: 'off', placeholder: p.has_access_code ? 'saved (leave empty to keep)' : 'from printer screen',
       }))));
-      row.append(field('Serial number (to start prints)', bind('serial', el('input', { placeholder: 'optional' }))));
-      row.append(el('label', { class: 'check' }, bind('use_ams', el('input', { type: 'checkbox' }), 'bool'), 'Print from AMS'));
+      advanced.append(field('Serial number (for remote start)', bind('serial', el('input', { placeholder: 'Optional' }))));
+      advanced.append(el('label', { class: 'check' }, bind('use_ams', el('input', { type: 'checkbox' }), 'bool'), 'Print from AMS'));
     }
-    row.append(el('label', { class: 'check' }, bind('flip_horizontal', el('input', { type: 'checkbox' }), 'bool'), 'Mirror camera'));
+    advanced.append(field('Camera URL override', bind('webcam_url', el('input', {
+      placeholder: 'http://camera-ip/webcam/?action=stream',
+    }))));
+    advanced.append(field('Camera rotation', bind('rotate', rotate, 'int')));
+    advanced.append(el('label', { class: 'check' }, bind('flip_horizontal', el('input', { type: 'checkbox' }), 'bool'), 'Mirror camera'));
+    const msg = el('span', { class: 'msg', role: 'status' });
+    const preview = el('div', { class: 'camera-preview' });
+    const needsSave = () => !p.id || editedPrinters.has(p);
+    const check = el('button', { text: 'Check connection', onclick: async () => {
+      check.disabled = true;
+      preview.replaceChildren();
+      msg.className = 'msg';
+      msg.textContent = 'Checking printer and camera…';
+      try {
+        const result = await api(`/api/setup/check-printer/${encodeURIComponent(p.id)}`, {});
+        if (needsSave()) return;
+        msg.replaceChildren(
+          el('span', { class: result.printer_ok ? 'ok' : 'bad', text: result.printer_ok ? 'Printer reachable' : result.printer }),
+          el('span', { class: result.camera_ok ? 'ok' : 'bad', text: result.camera_ok ? 'Camera working' : result.camera }));
+        if (result.camera_ok) {
+          preview.append(
+            el('img', { src: `/snap/${encodeURIComponent(p.id)}?t=${Date.now()}`, alt: `Camera preview for ${p.name}` }),
+            el('a', { class: 'btn', href: '/', text: 'Open live dashboard' }));
+        }
+      } catch (e) {
+        if (needsSave()) return;
+        msg.className = 'msg bad';
+        msg.textContent = e.message;
+      } finally {
+        check.disabled = needsSave();
+      }
+    } });
+    check.disabled = needsSave();
+    const markEdited = () => {
+      editedPrinters.add(p);
+      check.disabled = true;
+      preview.replaceChildren();
+      msg.className = 'msg';
+      msg.textContent = 'Save changes to check the connection.';
+    };
+    row.addEventListener('input', markEdited);
+    row.addEventListener('change', markEdited);
+    row.append(el('div', { class: 'actions connection-check' }, check, msg), preview);
     list.append(row);
+    if (checkIds.has(p.id)) check.click();
   });
-  setState('pr-state', printers.length ? `${printers.length} configured` : 'none yet', printers.length ? 'ok' : 'todo');
+  const saved = printers.filter(p => p.id).length;
+  setState('pr-state', saved ? `${saved} saved` : 'none saved', saved ? 'ok' : 'todo');
 }
 
 function addPrinter(type) {
@@ -246,13 +326,22 @@ function addPrinter(type) {
   if (type === 'klipper') p.ui_port = nextUiPort();
   printers.push(p);
   renderPrinters();
+  $('printer-list').lastElementChild.querySelector('input').focus();
 }
 $('add-klipper').addEventListener('click', () => addPrinter('klipper'));
 $('add-bambu').addEventListener('click', () => addPrinter('bambu'));
 
 $('save').addEventListener('click', async () => {
   const msg = $('save-msg');
+  const missingHost = printers.findIndex(p => !p.host);
+  if (missingHost !== -1) {
+    msg.className = 'msg bad';
+    msg.textContent = `Enter the IP address or hostname for printer ${missingHost + 1}, or remove that row.`;
+    $('printer-list').children[missingHost].querySelector('input[name="host"]').focus();
+    return;
+  }
   const used = new Set();
+  const checkIds = new Set();
   const payload = printers.map(p => {
     const item = Object.assign({}, p);
     delete item.has_access_code;
@@ -262,16 +351,17 @@ $('save').addEventListener('click', async () => {
     while (used.has(id)) id = `${item.id}-${n++}`;
     item.id = id;
     used.add(id);
+    if (!p.id || editedPrinters.has(p)) checkIds.add(id);
     return item;
   });
-  const allowed = $('allowed').value.split(',').map(s => s.trim()).filter(Boolean);
   msg.className = 'msg';
   msg.textContent = 'Saving…';
   try {
-    await api('/api/setup/config', { printers: payload, allowed_users: allowed });
+    await api('/api/setup/config', { printers: payload });
     msg.className = 'msg ok';
-    msg.textContent = 'Saved. If you added a Klipper printer, click Publish again.';
-    await loadConfig();
+    msg.textContent = 'Printers saved.';
+    printers = (await api('/api/setup/config')).printers;
+    renderPrinters(checkIds);
     refresh();
   } catch (e) {
     msg.className = 'msg bad';
@@ -279,7 +369,7 @@ $('save').addEventListener('click', async () => {
   }
 });
 
-// ---------------------------------------------------------------- step 4: notifications
+// ---------------------------------------------------------------- notifications
 const EVENT_LABELS = {
   complete: 'finishes', error: 'fails / errors', paused: 'pauses',
   cancelled: 'is cancelled', started: 'starts', offline: 'printer goes offline while printing',
@@ -335,7 +425,8 @@ $('nt-save').addEventListener('click', async () => {
     const r = await api('/api/setup/notifications', payload);
     msg.className = 'msg ok';
     msg.textContent = r.channels.length ? `Saved. Sending to: ${r.channels.join(', ')}.` : 'Saved. No phone channel set.';
-    await loadConfig();
+    const cfg = await api('/api/setup/config');
+    renderNotifications(cfg.notifications, cfg.channels);
   } catch (e) {
     msg.className = 'msg bad';
     msg.textContent = e.message;

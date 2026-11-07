@@ -1,11 +1,17 @@
 """Talk to the local Tailscale client: status, login and `tailscale serve`."""
 import json
+import ntpath
 import os
 import re
 import shutil
 import subprocess
 import threading
 import time
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 URL_RE = re.compile(r"https://[^\s\"'<>]+")
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -20,12 +26,30 @@ CANDIDATES = [
 ]
 
 
+def windows_service_image():
+    if winreg is None:
+        return None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services\Tailscale") as key:
+            image, _ = winreg.QueryValueEx(key, "ImagePath")
+            return image if isinstance(image, str) else None
+    except OSError:
+        return None
+
+
 def find_cli():
     found = shutil.which("tailscale")
     if found:
         return found
+    image = windows_service_image()
+    if image:
+        match = re.match(r'^\s*"?(.*?\\tailscaled\.exe)(?:"|\s|$)', ntpath.expandvars(image), re.I)
+        if match and ntpath.isabs(match[1]):
+            candidate = ntpath.join(ntpath.dirname(match[1]), "tailscale.exe")
+            if os.path.isfile(candidate):
+                return candidate
     for path in CANDIDATES:
-        if os.path.exists(path):
+        if os.path.isfile(path):
             return path
     return None
 
@@ -56,8 +80,16 @@ def safe_url(url):
 
 def status():
     if not find_cli():
+        if windows_service_image():
+            return {"installed": True, "state": "Error",
+                    "detail": "Windows has a Tailscale service, but the Tailscale command was not found. Open the Tailscale app to check the installation."}
         return {"installed": False, "state": "NotInstalled", "download_url": DOWNLOAD_URL}
-    code, out, _ = _run(["status", "--json"], 10)
+    try:
+        _, out, timed_out = _run(["status", "--json"], 10)
+    except OSError:
+        return {"installed": True, "state": "Error", "detail": "Could not start the Tailscale command."}
+    if timed_out:
+        return {"installed": True, "state": "Error", "detail": "Tailscale did not respond. Check the Tailscale app."}
     try:
         data = json.loads(out)
     except ValueError:
@@ -88,6 +120,8 @@ def start_login(wait=20):
             return {"ok": False, "error": "Tailscale is not installed"}
         if st["state"] == "Running":
             return {"ok": True, "already": True}
+        if st["state"] != "NeedsLogin":
+            return {"ok": False, "error": "Open the Tailscale app and check its connection status."}
         if st.get("auth_url"):
             return {"ok": True, "auth_url": st["auth_url"]}
 

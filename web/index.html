@@ -7,26 +7,30 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#f6f8fa">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Printers">
 <link rel="stylesheet" href="/app.css">
 </head>
-<body>
-<header>
-  <h1>Printers</h1>
-  <span class="hint">Click a camera to open the printer. Drag a .gcode file onto a printer to send it.</span>
-  <span class="menu-wrap">
-    <button id="hidden-btn" class="hidden" aria-haspopup="true" aria-expanded="false"></button>
-    <div id="hidden-menu" class="menu hidden"></div>
-  </span>
-  <button id="install" class="hidden" title="Install as an app on this device">Install app</button>
-  <button id="alerts" class="hidden" title="Show a pop-up when a print finishes or fails">Enable alerts</button>
-  <span class="who" id="who"></span>
+<body class="dashboard-page">
+<header class="app-header">
+  <a class="brand" href="/"><img src="/icon-192.png" alt="" width="30" height="30">OS_3DPMS</a>
+  <nav aria-label="Main">
+    <a href="/" aria-current="page">Dashboard</a>
+    <a id="setup-link" class="hidden" href="/setup">Setup</a>
+  </nav>
+  <div class="header-actions">
+    <span class="menu-wrap">
+      <button id="hidden-btn" class="hidden" aria-haspopup="true" aria-expanded="false"></button>
+      <div id="hidden-menu" class="menu hidden"></div>
+    </span>
+    <button id="install" class="hidden" title="Install as an app on this device">Install app</button>
+    <button id="alerts" class="hidden" title="Show a pop-up when a print finishes or fails">Enable alerts</button>
+  </div>
 </header>
-<main class="grid" id="grid"></main>
+<main class="grid" id="grid" aria-label="Printer dashboard"></main>
 
 <div id="modal">
   <div class="mtop">
@@ -41,17 +45,17 @@
   <section class="tile nocam">
     <div class="top"><span class="name"></span><span class="chip"></span>
       <button class="hide" title="Hide this camera on this device" aria-label="Hide this camera">×</button></div>
-    <div class="view">
+    <button type="button" class="view">
       <img alt="">
-      <div class="nocam">Connecting to camera…</div>
-      <span class="open"></span>
-    </div>
+      <span class="nocam">Connecting to camera…</span>
+      <span class="open" aria-hidden="true"></span>
+    </button>
     <div class="progress"><div></div></div>
     <div class="file"></div>
     <div class="bar">
-      <button class="send">Send G-code…</button>
+      <button class="primary send">Send file</button>
       <span class="grow"></span>
-      <button class="live">Fullscreen</button>
+      <button class="live">Camera</button>
       <button class="ui">Mainsail</button>
     </div>
     <div class="drop"></div>

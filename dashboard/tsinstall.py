@@ -26,7 +26,8 @@ MAX_BYTES = 300 * 1024 * 1024
 UAC_DECLINED = 1223
 OK_CODES = (0, 3010)  # 3010 = installed, restart recommended
 
-PS_VERIFY = ("$s = Get-AuthenticodeSignature -LiteralPath $env:OS3DPMS_MSI; "
+PS_VERIFY = ("Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop; "
+             "$s = Get-AuthenticodeSignature -LiteralPath $env:OS3DPMS_MSI -ErrorAction Stop; "
              "Write-Output ($s.Status.ToString() + '|' + $s.SignerCertificate.Subject)")
 PS_INSTALL = ("try { $p = Start-Process -FilePath msiexec.exe -Verb RunAs -Wait -PassThru "
               "-ArgumentList @('/i', ('\"' + $env:OS3DPMS_MSI + '\"'), '/quiet', '/norestart'); "
@@ -103,9 +104,12 @@ def _worker():
         download(MSI_URL % arch(), msi)
 
         _set("verifying", "Checking the Tailscale signature…")
-        _, out = _powershell(PS_VERIFY, msi, 60)
+        code, out = _powershell(PS_VERIFY, msi, 60)
+        if code != 0:
+            log.warning("could not run Windows signature check: %s", out.strip())
+            raise RuntimeError("Windows could not verify the Tailscale installer. Download it from Tailscale and install it manually.")
         if not signer_ok(out):
-            raise RuntimeError("the downloaded file is not signed by Tailscale Inc. Nothing was installed.")
+            raise RuntimeError("Windows did not confirm a valid signature from Tailscale Inc. Nothing was installed.")
 
         _set("installing", "Click Yes on the Windows permission prompt…")
         code, _ = _powershell(PS_INSTALL, msi, 900)
@@ -132,7 +136,7 @@ def start(background=True):
     if not supported():
         return {"ok": False, "error": "Automatic install works on Windows only.",
                 "download_url": tailscale.DOWNLOAD_URL}
-    if tailscale.find_cli():
+    if tailscale.find_cli() or tailscale.windows_service_image():
         return {"ok": True, "already": True}
     with _lock:
         if _state["state"] in BUSY:

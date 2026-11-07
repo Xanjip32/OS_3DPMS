@@ -22,8 +22,8 @@ reachable from the internet.
 
 ## Features
 
-- Camera grid that fits the screen: 2×2 on a monitor, one row on an ultrawide, a single column on a phone
-- Click a camera to open that printer's full Mainsail page, through the same Tailscale door
+- Four camera cards fit on a desktop screen, with more below. Cards stack on phones.
+- Click a camera to enlarge it. Use the Mainsail button to open printer controls.
 - Drag and drop G-code upload, with an optional "start print" (skipped when the printer is busy)
 - Print status and progress for Klipper and Bambu printers
 - Notifications when a print finishes, fails, pauses or a printer goes offline: pop-ups in the
@@ -35,21 +35,26 @@ reachable from the internet.
 
 ## Quick start (Windows)
 
-1. On the PC that sits next to the printers (it must reach their IPs), download this repository:
-   **Code → Download ZIP**, and extract it, for example to `C:\OS_3DPMS`.
-2. Double-click **`install.bat`**. It installs Python (with `winget`) and Tailscale if they are
-   missing, sets OS_3DPMS to start at login, and opens the setup page. Tailscale is downloaded
-   from `pkgs.tailscale.com`, checked to be signed by Tailscale Inc., and installed silently;
-   Windows asks for permission once.
-3. Follow the setup page (`http://127.0.0.1:8079/setup`):
-   1. **Install Tailscale** (only if step 2 could not) and **Log in to Tailscale**. The login
-      opens Tailscale's own sign-in page; your password never passes through OS_3DPMS.
-   2. **Add your printers** (IP address; Bambu printers also need the LAN access code).
-   3. **Publish.** The first time, Tailscale asks you to enable HTTPS for your tailnet (one click).
-   4. Copy the link, for example `https://printer-pc.tail1234.ts.net/`.
-4. On your own laptop or phone, install Tailscale, sign in with the **same account**, and open the link.
+1. Extract the Windows ZIP on a PC that can reach the printers. Keep the extracted folder in a
+   permanent location, for example `C:\OS_3DPMS`.
+2. Double-click **`install.bat`**. The Windows package includes Python. The source download
+   can use an existing Python or install it with `winget`. The installer sets OS_3DPMS to start
+   at login and opens [Setup](http://127.0.0.1:8079/setup).
+3. Choose **Add Klipper** or **Add Bambu**, enter the printer IP, and click **Save printers**.
+   Bambu printers also need the LAN access code. Setup checks the printer and shows a camera
+   preview as soon as it receives a frame. Click **Open live dashboard** to see your feeds.
+
+For optional Tailscale access, expand **Remote access** in Setup, install or connect Tailscale,
+and click **Publish dashboard**. Open the resulting link on a device connected to the same tailnet.
 
 To stop: `stop.bat`. To remove: `uninstall.bat`.
+
+If a printer or camera fails to connect, click **Save printers**, then **Check connection**
+on that printer in setup. The test runs on the printer-room PC and reports the printer and
+camera separately. That PC needs network access to the printer's local address. For Klipper,
+enter the HTTP port used by the printer's Mainsail or Fluidd page if it differs from 80.
+For Bambu, the printer check tests reachability of its LAN port. The camera check needs
+a working feed and LAN access code for the built-in JPEG camera.
 
 ### Install as an app (PC, iPhone, Android)
 
@@ -77,7 +82,8 @@ user that may call `tailscale serve` (`sudo tailscale set --operator=$USER`).
 ## Printer notes
 
 **Klipper / Mainsail.** The camera URL is read from Moonraker's webcam list, so whatever
-works in Mainsail works here. If uploads fail with 401, add the printer PC to
+provides an HTTP MJPEG stream or a JPEG snapshot works here. Set **Camera URL override**
+in setup to use a different HTTP MJPEG or JPEG snapshot URL. If uploads fail with 401, add the printer PC to
 `trusted_clients` in `moonraker.conf`, or enter a Moonraker API key on the setup page.
 
 **Bambu Lab.** You need the LAN access code (printer screen: Settings → Network). Uploads
@@ -85,6 +91,8 @@ go to the SD card, so a card must be inserted. To start prints remotely, also en
 serial number (Settings → Device) and send `.gcode.3mf` files exported from Bambu Studio or
 OrcaSlicer. The serial number also turns on live status and notifications for the printer. Newer firmware may require *LAN Only Mode* / *Developer Mode* for third-party
 tools, and future firmware updates may change this.
+The built-in camera reader uses the Bambu JPEG feed on port 6000. For cameras that
+use RTSP, set **Camera URL override** to an HTTP MJPEG or JPEG snapshot from a camera bridge.
 
 ## Notifications
 

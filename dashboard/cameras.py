@@ -56,6 +56,12 @@ class CameraHub:
             self.cond.wait_for(lambda: self.stopped or self.frame_time > newer_than, timeout)
             return self.frame, self.frame_time
 
+    def snapshot(self):
+        self.touch()
+        cutoff = time.time() - 3
+        frame, ts = self.wait_frame(cutoff, 8)
+        return frame if ts > cutoff and not self.stopped else None
+
     def _run(self):
         while self.active():
             try:

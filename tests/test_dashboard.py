@@ -6,11 +6,13 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dashboard import config, web, winsecret  # noqa: E402
+from dashboard import cameras, config, web, winsecret  # noqa: E402
 from dashboard.tlspin import CertificateChanged, PinStore  # noqa: E402
 from tests.mock_printer import MockPrinter  # noqa: E402
 
@@ -195,6 +197,28 @@ class DashboardTest(ServerFixture):
         self.assertEqual(resp.getheader("Content-Type"), "image/jpeg")
         self.assertTrue(data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9"))
 
+    def test_check_printer_reports_moonraker_and_camera(self):
+        path = "/api/setup/check-printer/voron"
+        headers = {"X-Dashboard": "1"}
+        resp, _ = self.request("POST", path, b"{}", headers)
+        self.assertEqual(resp.status, 404)
+        resp, _ = self.request("POST", path, b"{}", admin=True)
+        self.assertEqual(resp.status, 403)
+        resp, data = self.request("POST", path, b"{}", headers, admin=True)
+        self.assertEqual(resp.status, 200, data)
+        result = json.loads(data)
+        self.assertTrue(result["printer_ok"])
+        self.assertTrue(result["camera_ok"])
+        self.assertIn(str(self.printer.port), result["printer"])
+
+        with mock.patch("dashboard.web.klipper.status", side_effect=TimeoutError):
+            resp, data = self.request("POST", path, b"{}", headers, admin=True)
+        self.assertEqual(resp.status, 200, data)
+        result = json.loads(data)
+        self.assertFalse(result["printer_ok"])
+        self.assertIn("No connection", result["printer"])
+        self.assertTrue(result["camera_ok"])
+
     def test_status(self):
         self.app.monitor.poll_once()
         resp, data = self.request("GET", "/api/status/voron")
@@ -209,6 +233,25 @@ class DashboardTest(ServerFixture):
         conn.close()
 
     # ---------------------------------------------------------------- setup save
+
+    def test_setup_saves_allowed_accounts_separately(self):
+        path = "/api/setup/config"
+        headers = {"X-Dashboard": "1"}
+        hubs = self.app.hubs
+        try:
+            resp, data = self.request("POST", path, json.dumps({"allowed_users": [" Alice@example.com "]}),
+                                      headers, admin=True)
+            self.assertEqual(resp.status, 200, data)
+            self.assertEqual(config.read_raw(self.cfg_path)["allowed_users"], [USER])
+            self.assertIs(self.app.hubs, hubs)
+            self.assertEqual(config.secret(self.app.printers["p1s"], "access_code"), "secret123")
+            resp, _ = self.request("GET", "/api/printers", user="other@example.com")
+            self.assertEqual(resp.status, 403)
+            resp, _ = self.request("POST", path, '{"allowed_users": "invalid"}', headers, admin=True)
+            self.assertEqual(resp.status, 400)
+            self.assertEqual(self.app.cfg["allowed_users"], [USER])
+        finally:
+            self.app.apply_setup({"allowed_users": []})
 
     def test_setup_save_keeps_secret(self):
         resp, data = self.request("GET", "/api/setup/config", admin=True)
@@ -237,6 +280,18 @@ class DashboardTest(ServerFixture):
 
 
 class UnitTests(unittest.TestCase):
+    def test_snapshot_rejects_stale_frame(self):
+        hub = cameras.CameraHub("voron", None)
+        hub.frame = b"old frame"
+        hub.frame_time = time.time() - 10
+        with mock.patch.object(hub, "touch"), mock.patch.object(hub.cond, "wait_for"):
+            self.assertIsNone(hub.snapshot())
+
+    def test_validate_rejects_non_http_camera_override(self):
+        with self.assertRaisesRegex(config.ConfigError, "camera URL"):
+            config.validate({"printers": [{"id": "voron", "type": "klipper", "host": "192.168.0.23",
+                                          "webcam_url": "file:///local-file"}]})
+
     def test_safe_filename(self):
         self.assertEqual(web.safe_filename("../../a b.gcode"), "a b.gcode")
         self.assertEqual(web.safe_filename('x";rm.gcode'), "x_rm.gcode")

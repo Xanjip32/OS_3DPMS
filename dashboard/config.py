@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import re
+import urllib.parse
 
 from . import winsecret
 
@@ -98,6 +99,15 @@ def _validate(raw):
             raise ConfigError("%s: host must be an IP address or hostname" % pid)
         p["host"] = host
         p["name"] = str(p.get("name") or pid).strip()[:64]
+
+        webcam = str(p.get("webcam_url") or "").strip()
+        if webcam:
+            url = urllib.parse.urlsplit(urllib.parse.urljoin("http://%s/" % host, webcam))
+            if url.scheme not in ("http", "https") or not url.hostname:
+                raise ConfigError("%s: camera URL must use HTTP or HTTPS" % pid)
+            p["webcam_url"] = webcam
+        else:
+            p.pop("webcam_url", None)
 
         if p["type"] == "klipper":
             p["http_port"] = int(p.get("http_port", 80))

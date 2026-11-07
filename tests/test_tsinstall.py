@@ -50,6 +50,20 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(tailscale.safe_url("https://login.tailscale.com.evil.example/a"))
         self.assertFalse(tailscale.safe_url("javascript:alert(1)"))
 
+    def test_detects_tailscale_in_windows_service_directory(self):
+        image = r'"D:\Network Apps\Tailscale\tailscaled.exe" --verbose=1'
+        cli = r"D:\Network Apps\Tailscale\tailscale.exe"
+        with mock.patch.object(tailscale.shutil, "which", return_value=None), \
+                mock.patch.object(tailscale, "windows_service_image", return_value=image), \
+                mock.patch.object(tailscale.os.path, "isfile", side_effect=lambda path: path == cli):
+            self.assertEqual(tailscale.find_cli(), cli)
+
+    def test_stopped_client_does_not_start_login(self):
+        with mock.patch.object(tailscale, "status", return_value={"installed": True, "state": "Stopped"}), \
+                mock.patch.object(tailscale.subprocess, "Popen") as start:
+            self.assertFalse(tailscale.start_login()["ok"])
+            start.assert_not_called()
+
     def test_download_rejects_redirect_elsewhere(self):
         dest = os.path.join(tempfile.mkdtemp(), "dl.msi")
         ok = lambda url, timeout: FakeResponse(b"MSI", "https://pkgs.tailscale.com/stable/x.msi")  # noqa: E731
@@ -58,13 +72,13 @@ class InstallerTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             tsinstall.download("u", dest, opener=bad)
 
-    def run_worker(self, verify_out, install_code):
+    def run_worker(self, verify_out, install_code, verify_code=0):
         calls = []
 
         def fake_ps(script, msi, timeout):
             calls.append(script)
             if script == tsinstall.PS_VERIFY:
-                return 0, verify_out
+                return verify_code, verify_out
             return install_code, ""
 
         with mock.patch.object(tsinstall, "download", return_value=3), \
@@ -78,7 +92,11 @@ class InstallerTests(unittest.TestCase):
         calls = self.run_worker("Valid|CN=Someone, O=Someone Else", 0)
         self.assertEqual(calls, [tsinstall.PS_VERIFY])
         self.assertEqual(tsinstall.state()["state"], "failed")
-        self.assertIn("not signed", tsinstall.state()["detail"])
+        self.assertIn("valid signature", tsinstall.state()["detail"])
+
+    def test_verification_failure_is_reported_without_running_installer(self):
+        self.assertEqual(self.run_worker(SIGNED, 0, verify_code=1), [tsinstall.PS_VERIFY])
+        self.assertIn("could not verify", tsinstall.state()["detail"])
 
     def test_uac_declined(self):
         self.run_worker(SIGNED, tsinstall.UAC_DECLINED)
@@ -96,10 +114,13 @@ class InstallerTests(unittest.TestCase):
         with mock.patch.object(tsinstall, "supported", return_value=True), \
                 mock.patch.object(tailscale, "find_cli", return_value="tailscale"):
             self.assertTrue(tsinstall.start()["already"])
-        tsinstall._state["state"] = "installing"
         with mock.patch.object(tsinstall, "supported", return_value=True), \
                 mock.patch.object(tailscale, "find_cli", return_value=None):
-            self.assertTrue(tsinstall.start()["running"])
+            with mock.patch.object(tailscale, "windows_service_image", return_value="service"):
+                self.assertTrue(tsinstall.start()["already"])
+            tsinstall._state["state"] = "installing"
+            with mock.patch.object(tailscale, "windows_service_image", return_value=None):
+                self.assertTrue(tsinstall.start()["running"])
 
 
 class InstallRouteTests(test_dashboard.ServerFixture):

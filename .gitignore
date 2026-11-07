@@ -10,6 +10,7 @@ pins.json.tmp
 dashboard.pid
 tmp/
 dev-data/
+dist/
 
 # Python
 __pycache__/

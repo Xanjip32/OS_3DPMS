@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Show a camera preview automatically after saving a new or edited printer.
+- Show four camera cards on a desktop dashboard and scroll for additional printers.
+- Bundle Python in the Windows package and make Tailscale installation optional.
+- Detect Tailscale in custom Windows install locations and show when it is disconnected.
+- Load Windows' built-in signature checker before verifying the Tailscale installer.
+- Simplify setup around printers and remote access, with optional settings in expandable sections.
+- Refresh the monitoring dashboard with a clearer camera grid and direct links to local setup.
+- Save allowed Tailscale accounts separately from printer settings.
+- Setup can check printer and camera connectivity independently before publishing on Tailscale.
+- Configure a Klipper printer HTTP port or an HTTP camera override directly in setup.
+- Dashboard snapshots report offline when the camera stops sending frames.
+
 ## 1.3.1
 
 - × button on each camera hides it on that device; "Hidden (n)" menu at the top shows it again.

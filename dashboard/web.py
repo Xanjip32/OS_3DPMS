@@ -15,10 +15,12 @@ import json
 import logging
 import os
 import re
+import socket
 import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -125,7 +127,7 @@ class App:
                         log.error("cannot open port %d for %s: %s", p["ui_port"], p["id"], e)
 
     def _camera_source(self, p):
-        if p["type"] == "bambu":
+        if p["type"] == "bambu" and not p.get("webcam_url"):
             return lambda hub: cameras.bambu_camera(hub, p["host"], config.secret(p, "access_code"), self.pins)
         return lambda hub: cameras.klipper_camera(hub, klipper.webcam_url(p))
 
@@ -187,32 +189,38 @@ class App:
             self.cfg = dict(self.cfg, notifications=cfg["notifications"])
 
     def apply_setup(self, payload):
-        if not isinstance(payload, dict) or not isinstance(payload.get("printers"), list):
+        if not isinstance(payload, dict) or not {"printers", "allowed_users"}.intersection(payload):
             raise config.ConfigError("bad request")
         raw = config.read_raw(self.config_path)
-        old = {p.get("id"): p for p in raw.get("printers", []) if isinstance(p, dict)}
-        printers = []
-        for item in payload["printers"]:
-            if not isinstance(item, dict):
-                raise config.ConfigError("bad printer entry")
-            p = {k: item[k] for k in EDITABLE_FIELDS if k in item and item[k] not in (None, "")}
-            prev = old.get(p.get("id"), {})
-            for field in config.SECRET_FIELDS:
-                value = str(item.get(field) or "").strip()
-                if value:
-                    p[field] = value
-                elif prev.get(field + "_protected"):
-                    p[field + "_protected"] = prev[field + "_protected"]
-                elif prev.get(field):
-                    p[field] = prev[field]
-            printers.append(p)
-        raw["printers"] = printers
-        users = payload.get("allowed_users", raw.get("allowed_users", []))
-        raw["allowed_users"] = users if isinstance(users, list) else []
+        if "printers" in payload:
+            if not isinstance(payload["printers"], list):
+                raise config.ConfigError("printers must be a list")
+            old = {p.get("id"): p for p in raw.get("printers", []) if isinstance(p, dict)}
+            printers = []
+            for item in payload["printers"]:
+                if not isinstance(item, dict):
+                    raise config.ConfigError("bad printer entry")
+                p = {k: item[k] for k in EDITABLE_FIELDS if k in item and item[k] not in (None, "")}
+                prev = old.get(p.get("id"), {})
+                for field in config.SECRET_FIELDS:
+                    value = str(item.get(field) or "").strip()
+                    if value:
+                        p[field] = value
+                    elif prev.get(field + "_protected"):
+                        p[field + "_protected"] = prev[field + "_protected"]
+                    elif prev.get(field):
+                        p[field] = prev[field]
+                printers.append(p)
+            raw["printers"] = printers
+        if "allowed_users" in payload:
+            raw["allowed_users"] = payload["allowed_users"]
         cfg = config.validate(raw)
         config.protect_secrets(cfg)
         config.save(self.config_path, cfg)
-        self.reload()
+        if "printers" in payload:
+            self.reload()
+        else:
+            self.cfg = dict(self.cfg, allowed_users=cfg["allowed_users"])
 
 
 class LimitedServer(ThreadingHTTPServer):
@@ -398,14 +406,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.handle_upload(user, parts[2])
             if self.admin and path == "/api/setup/config":
                 try:
-                    self.app.apply_setup(self.read_json())
+                    payload = self.read_json()
+                    with self.app.lock:
+                        self.app.apply_setup(payload)
                 except config.ConfigError as e:
                     return self.send_json(400, {"ok": False, "error": str(e)})
                 self.app.audit(user, "config-saved", printers=len(self.app.printers))
                 return self.send_json(200, {"ok": True})
+            if self.admin and len(parts) == 4 and parts[:3] == ["api", "setup", "check-printer"]:
+                return self.check_printer(parts[3])
             if self.admin and path == "/api/setup/notifications":
                 try:
-                    self.app.apply_notifications(self.read_json())
+                    payload = self.read_json()
+                    with self.app.lock:
+                        self.app.apply_notifications(payload)
                 except config.ConfigError as e:
                     return self.send_json(400, {"ok": False, "error": str(e)})
                 self.app.audit(user, "notifications-saved", channels=self.app.notifier.channels())
@@ -444,10 +458,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, st or {"state": None})
 
     def send_snapshot(self, hub):
-        hub.touch()
-        frame, ts = hub.frame, hub.frame_time
-        if frame is None or time.time() - ts > 3:
-            frame, ts = hub.wait_frame(ts, 8)
+        frame = hub.snapshot()
         if frame is None:
             return self.send_json(503, {"error": "camera offline"})
         self.send_response(200)
@@ -455,6 +466,46 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(frame)))
         self.end_headers()
         self.wfile.write(frame)
+
+    def check_printer(self, pid):
+        with self.app.lock:
+            p = self.app.printers.get(pid)
+            hub = self.app.hubs.get(pid)
+        if p is None or hub is None:
+            return self.send_json(404, {"error": "Save this printer before checking it."})
+
+        hub.touch()
+        host = p["host"]
+        port = 8883 if p["type"] == "bambu" else p["http_port"]
+        try:
+            if p["type"] == "klipper":
+                klipper.status(p)
+                printer = "Moonraker responded at %s:%d." % (host, port)
+            else:
+                with socket.create_connection((host, port), timeout=3):
+                    printer = "Bambu LAN port is reachable at %s:%d." % (host, port)
+            printer_ok = True
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            printer_ok = False
+            if isinstance(error, urllib.error.HTTPError):
+                detail = "HTTP %d. Check the printer HTTP port." % error.code
+                if error.code in (401, 403):
+                    detail = "Moonraker denied access. Check the API key or Moonraker trusted clients."
+            elif isinstance(error, (ValueError, KeyError, TypeError)):
+                detail = "The response is not from the Moonraker API. Check the printer HTTP port."
+            else:
+                detail = "No connection. Check the address, port and this PC’s access to the printer network."
+            printer = "%s:%d. %s" % (host, port, detail)
+
+        camera_ok = hub.snapshot() is not None
+        if camera_ok:
+            camera = "Camera frame received."
+        elif p["type"] == "bambu" and not p.get("webcam_url"):
+            camera = "No camera frame. Check the LAN access code and whether this model provides a JPEG feed on port 6000."
+        else:
+            camera = "No camera frame. Check that the MJPEG or JPEG snapshot URL opens from this PC."
+        return self.send_json(200, {"printer_ok": printer_ok, "printer": printer,
+                                    "camera_ok": camera_ok, "camera": camera})
 
     def send_stream(self, hub):
         self.send_response(200)

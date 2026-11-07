@@ -3,6 +3,13 @@
 const FRAME_MS = 200;               // grid refresh: about 5 frames per second per camera
 const UPLOAD_RE = /\.(gcode|gco|g|3mf)$/i;
 const grid = document.getElementById('grid');
+const visibleCameras = new WeakSet();
+const cameraObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (entry.isIntersecting) visibleCameras.add(entry.target);
+    else visibleCameras.delete(entry.target);
+  }
+});
 let maxUploadMb = 1024;
 
 function mainsailUrl(p) {
@@ -62,7 +69,8 @@ function buildTile(p) {
   $('.name').textContent = p.name;
   $('.target').textContent = p.name;
   $('.drop').textContent = `Drop to send to ${p.name}`;
-  $('.open').textContent = p.ui_port ? 'Open Mainsail' : 'Live view';
+  $('.open').textContent = 'Live view';
+  $('.view').setAttribute('aria-label', `View camera for ${p.name}`);
   if (!p.ui_port) $('.ui').remove();
 
   const img = $('.view img');
@@ -76,7 +84,11 @@ function buildTile(p) {
   let pending = null;
   let busy = false;
   let stopped = false;
-  t.stop = () => { stopped = true; img.removeAttribute('src'); };
+  t.stop = () => {
+    stopped = true;
+    cameraObserver.unobserve(t);
+    img.removeAttribute('src');
+  };
   $('.hide').addEventListener('click', e => {
     e.stopPropagation();
     if (busy) { toast(`${p.name}: wait until the upload finishes`, true); return; }
@@ -88,7 +100,10 @@ function buildTile(p) {
   // Camera: poll snapshots. Short requests keep browser connections free.
   function nextFrame() {
     if (stopped) return;
-    if (document.hidden || modal.classList.contains('show')) { setTimeout(nextFrame, 1000); return; }
+    if (document.hidden || !visibleCameras.has(t) || modal.classList.contains('show')) {
+      setTimeout(nextFrame, 1000);
+      return;
+    }
     img.src = `/snap/${id}?t=${Date.now()}`;
   }
   img.addEventListener('load', () => { t.classList.remove('nocam'); setTimeout(nextFrame, FRAME_MS); });
@@ -97,10 +112,11 @@ function buildTile(p) {
     nocam.textContent = 'Camera offline. Retrying…';
     setTimeout(nextFrame, 3000);
   });
+  cameraObserver.observe(t);
   nextFrame();
 
   const openUi = () => window.open(mainsailUrl(p), '_blank', 'noopener');
-  $('.view').addEventListener('click', () => (p.ui_port ? openUi() : openModal(p)));
+  $('.view').addEventListener('click', () => openModal(p));
   $('.live').addEventListener('click', () => openModal(p));
   if (p.ui_port) $('.ui').addEventListener('click', openUi);
 
@@ -187,47 +203,20 @@ function buildTile(p) {
   return t;
 }
 
-// ---------------------------------------------------------------- layout
-// Pick the column count that gives the biggest 16:9 camera with every tile on screen.
-// Phones fall back to one scrolling column.
-function layout() {
-  const tiles = grid.querySelectorAll('.tile');
-  const n = tiles.length;
-  if (!n) return;
-  const header = document.querySelector('header').offsetHeight;
-  const cs = getComputedStyle(grid);
-  const gap = parseFloat(cs.columnGap) || 12;
-  const W = grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  const H = window.innerHeight - header - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const view = tiles[0].querySelector('.view');
-  const chrome = Math.max(80, tiles[0].offsetHeight - view.offsetHeight);
-
-  let best = { cols: 1, rows: n, cam: 0 };
-  for (let cols = 1; cols <= n; cols++) {
-    const rows = Math.ceil(n / cols);
-    const tileW = (W - gap * (cols - 1)) / cols;
-    const camH = Math.min((H - gap * (rows - 1)) / rows - chrome, tileW * 9 / 16);
-    if (camH > best.cam) best = { cols, rows, cam: camH };
+function notice(text, localSetup = false) {
+  const panel = document.createElement('div');
+  panel.className = 'notice';
+  const message = document.createElement('p');
+  message.textContent = text;
+  panel.append(message);
+  if (localSetup) {
+    const link = document.createElement('a');
+    link.className = 'btn primary';
+    link.href = '/setup';
+    link.textContent = 'Add a printer';
+    panel.append(link);
   }
-
-  const fit = window.innerWidth >= 700 && best.cam >= 160;
-  document.body.classList.toggle('fit', fit);
-  if (fit) {
-    grid.style.setProperty('--cols', best.cols);
-    grid.style.setProperty('--rows', best.rows);
-    grid.style.height = (window.innerHeight - header) + 'px';
-  } else {
-    grid.style.setProperty('--cols', window.innerWidth >= 700 ? 2 : 1);
-    grid.style.height = '';
-  }
-}
-window.addEventListener('resize', layout);
-
-function notice(text) {
-  const el = document.createElement('div');
-  el.className = 'notice';
-  el.textContent = text;
-  grid.replaceChildren(el);
+  grid.replaceChildren(panel);
 }
 
 // ---------------------------------------------------------------- alerts
@@ -327,14 +316,9 @@ function render() {
   const visible = printers.filter(p => tiles.has(p.id)).map(p => tiles.get(p.id));
   grid.replaceChildren(...visible);
   if (!visible.length) {
-    const el = document.createElement('div');
-    el.className = 'notice';
-    el.textContent = 'All cameras are hidden. Use the "Hidden" button at the top to show them again.';
-    grid.append(el);
-    grid.style.height = '';
+    notice('All cameras are hidden. Open Hidden to show them again.');
   }
   renderHiddenMenu();
-  layout();
 }
 
 function renderHiddenMenu() {
@@ -375,9 +359,12 @@ async function start() {
     const info = await me.json();
     if (!me.ok) { notice(info.error || 'Access denied'); return; }
     maxUploadMb = info.max_upload_mb || maxUploadMb;
-    document.getElementById('who').textContent = info.admin ? 'This PC (admin) · Setup at /setup' : info.user;
+    document.getElementById('setup-link').classList.toggle('hidden', !info.admin);
     const list = await (await fetch('/api/printers')).json();
-    if (!list.length) { notice('No printers yet. Add them on the setup page of the printer PC.'); return; }
+    if (!list.length) {
+      notice(info.admin ? 'No printers yet.' : 'Add printers from Setup on the printer PC.', info.admin);
+      return;
+    }
     printers = list;
     render();
     updateAlertsButton();
