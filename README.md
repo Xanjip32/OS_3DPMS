@@ -1,24 +1,20 @@
 # OS_3DPMS — Open Source 3D Printer Monitoring System
 
-One web page with live camera feeds from all your 3D printers, open from any
-of your devices. Click a camera to open that printer's Mainsail. Drag a
-`.gcode` file onto a printer to send it, and optionally start the print.
+View your printer cameras and print status in one dashboard. Click a camera to
+enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a
+`.gcode` file onto a printer to send it and optionally start the print.
+
+**Current Windows preview:** Install OS_3DPMS on the printer-room PC, add a printer,
+and confirm its camera appears. Setup and the dashboard work on that PC without
+a remote access account.
+
+**Remote access:** [Tailscale](https://tailscale.com) is optional in this build.
+Browser access through a Cloudflare Workers relay is planned for a later build.
 
 Works with a mix of printers:
 
 - **Klipper printers** with Mainsail or Fluidd (Moonraker API): Voron, Two Trees Sapphire, RatRig, Creality with Klipper, and others
 - **Bambu Lab** P1S / P1P / A1 / X1 in LAN mode
-
-**[Tailscale](https://tailscale.com) is the front door.** The dashboard only
-listens on `127.0.0.1` and is published to *your* Tailscale network over
-HTTPS. No ports are opened on the office or home network, and nothing is
-reachable from the internet.
-
-```
- Your laptop / phone ──Tailscale (HTTPS, WireGuard)──▶ Printer-room PC ──LAN──▶ Printers
-  (signed in to your        identity checked on        OS_3DPMS on 127.0.0.1
-   Tailscale account)        every request
-```
 
 ## Features
 
@@ -30,7 +26,7 @@ reachable from the internet.
   dashboard, and on your phone through ntfy, Discord or Telegram
 - Per-camera rotation and mirroring
 - Hide cameras you do not need on a device (× button), and show them again from the top bar
-- Guided setup page: Tailscale login, add printers, publish — no config files to edit
+- Guided setup for adding printers and checking their cameras
 - Python standard library only: no packages to install, small attack surface
 
 ## Quick start (Windows)
@@ -56,7 +52,7 @@ enter the HTTP port used by the printer's Mainsail or Fluidd page if it differs 
 For Bambu, the printer check tests reachability of its LAN port. The camera check needs
 a working feed and LAN access code for the built-in JPEG camera.
 
-### Install as an app (PC, iPhone, Android)
+### Install the Tailscale dashboard as an app (PC, iPhone, Android)
 
 The dashboard installs like an app: its own window or full screen, with an icon, and no address bar.
 Every device needs the Tailscale app connected and signed in to the same account.
@@ -76,8 +72,8 @@ git clone https://github.com/Xanjip32/OS_3DPMS.git && cd OS_3DPMS
 python3 run.py --open-setup
 ```
 
-Install Tailscale first (`curl -fsSL https://tailscale.com/install.sh | sh`) and run as a
-user that may call `tailscale serve` (`sudo tailscale set --operator=$USER`).
+For optional remote access, install Tailscale and run as a user that may call
+`tailscale serve` (`sudo tailscale set --operator=$USER`).
 
 ## Printer notes
 
@@ -131,7 +127,8 @@ See [`config.example.json`](config.example.json).
 Read [SECURITY.md](SECURITY.md) for the full threat model. In short:
 
 - All listeners bind to `127.0.0.1`. Remote access exists only through `tailscale serve`.
-- Every dashboard request must carry the Tailscale identity header; an optional allow-list narrows it further.
+- Remote dashboard requests must carry the Tailscale identity header by default.
+  An optional allow-list restricts access to specific accounts.
 - The setup page is never published and rejects non-local `Host` headers (DNS rebinding).
 - Uploads need a same-origin custom header and pass Origin / `Sec-Fetch-Site` checks (CSRF).
 - Strict Content-Security-Policy, no inline scripts, `X-Frame-Options: DENY`.
