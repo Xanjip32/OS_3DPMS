@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Connect a Windows printer host to a protected Cloudflare Workers dashboard for camera previews and status.
+- Receive print alerts directly from the installed cloud dashboard through Web Push.
+
 - Show a camera preview automatically after saving a new or edited printer.
 - Show four camera cards on a desktop dashboard and scroll for additional printers.
 - Bundle Python in the Windows package and make Tailscale installation optional.

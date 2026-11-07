@@ -1,0 +1,11 @@
+{
+  "name": "os3dpms",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{ "name": "RELAY", "class_name": "PrinterRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PrinterRelay"] }]
+}

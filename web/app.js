@@ -11,6 +11,11 @@ const cameraObserver = new IntersectionObserver(entries => {
   }
 });
 let maxUploadMb = 1024;
+let monitorOnly = false;
+let pushKey = '';
+let pushRegistered = false;
+let pushManager = null;
+let pushSubscription = null;
 
 function mainsailUrl(p) {
   return `${location.protocol}//${location.hostname}:${p.ui_port}/`;
@@ -38,16 +43,26 @@ function toast(msg, bad) {
 const modal = document.getElementById('modal');
 const mimg = document.getElementById('mimg');
 let modalPrinter = null;
+let modalTimer;
 
 function openModal(p) {
   modalPrinter = p;
   document.getElementById('mname').textContent = p.name;
   document.getElementById('mopen').classList.toggle('hidden', !p.ui_port);
   mimg.style.transform = camTransform(p);
-  mimg.src = `/cam/${encodeURIComponent(p.id)}?t=${Date.now()}`;
+  if (monitorOnly) {
+    const refresh = () => {
+      if (!document.hidden) mimg.src = `/snap/${encodeURIComponent(p.id)}?t=${Date.now()}`;
+      modalTimer = setTimeout(refresh, 2500);
+    };
+    refresh();
+  } else {
+    mimg.src = `/cam/${encodeURIComponent(p.id)}?t=${Date.now()}`;
+  }
   modal.classList.add('show');
 }
 function closeModal() {
+  clearTimeout(modalTimer);
   modal.classList.remove('show');
   mimg.removeAttribute('src');
   modalPrinter = null;
@@ -80,6 +95,7 @@ function buildTile(p) {
   const bar = $('.progress > div');
   const input = $('input[type=file]');
   const sendBtn = $('.send');
+  if (monitorOnly) sendBtn.classList.add('hidden');
   const startBox = $('.start');
   let pending = null;
   let busy = false;
@@ -106,7 +122,7 @@ function buildTile(p) {
     }
     img.src = `/snap/${id}?t=${Date.now()}`;
   }
-  img.addEventListener('load', () => { t.classList.remove('nocam'); setTimeout(nextFrame, FRAME_MS); });
+  img.addEventListener('load', () => { t.classList.remove('nocam'); setTimeout(nextFrame, monitorOnly ? 4000 : FRAME_MS); });
   img.addEventListener('error', () => {
     t.classList.add('nocam');
     nocam.textContent = 'Camera offline. Retrying…';
@@ -155,6 +171,7 @@ function buildTile(p) {
   startBox.addEventListener('change', () => $('.warn').classList.toggle('hidden', !startBox.checked));
 
   function ask(file) {
+    if (monitorOnly) return;
     if (busy) { toast(`${p.name}: upload already running`, true); return; }
     if (!UPLOAD_RE.test(file.name)) { toast('Only .gcode or .3mf files', true); return; }
     if (file.size > maxUploadMb * 1048576) { toast(`File is larger than ${maxUploadMb} MB`, true); return; }
@@ -225,11 +242,38 @@ function notice(text, localSetup = false) {
 const alertsBtn = document.getElementById('alerts');
 const canNotify = 'Notification' in window && window.isSecureContext;
 function updateAlertsButton() {
-  alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission !== 'default');
+  if (monitorOnly) {
+    alertsBtn.classList.toggle('hidden', !canNotify || !pushKey || !pushManager || Notification.permission === 'denied');
+    alertsBtn.textContent = pushRegistered ? 'Test alerts' : 'Enable alerts';
+  } else {
+    alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission !== 'default');
+  }
 }
 alertsBtn.addEventListener('click', async () => {
-  try { await Notification.requestPermission(); } catch (e) { /* ignored */ }
-  updateAlertsButton();
+  try {
+    if (!monitorOnly) {
+      await Notification.requestPermission();
+      return;
+    }
+    const base64 = pushKey.replace(/-/g, '+').replace(/_/g, '/');
+    const key = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    pushSubscription ??= await pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    const response = await fetch(pushRegistered ? '/api/push/test' : '/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
+      body: JSON.stringify(pushSubscription),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || 'Could not set up alerts.');
+    }
+    toast(pushRegistered ? 'Test alert sent.' : 'Alerts enabled on this device.');
+    pushRegistered = true;
+  } catch (e) {
+    if (monitorOnly) toast(e.message || 'Could not set up alerts.', true);
+  } finally {
+    updateAlertsButton();
+  }
 });
 
 // ---------------------------------------------------------------- installed app
@@ -353,11 +397,46 @@ function toggleMenu(open) {
 hiddenBtn.addEventListener('click', e => { e.stopPropagation(); toggleMenu(hiddenMenu.classList.contains('hidden')); });
 document.addEventListener('click', e => { if (!hiddenMenu.contains(e.target)) toggleMenu(false); });
 
+async function pollCloudPrinters() {
+  try {
+    const response = await fetch('/api/printers');
+    const list = await response.json().catch(() => null);
+    if (!response.ok || !Array.isArray(list)) throw new Error(list?.error || 'Reload and sign in to view your printers.');
+    if (JSON.stringify(list) !== JSON.stringify(printers) || !grid.querySelector('.tile')) {
+      for (const tile of tiles.values()) tile.stop();
+      tiles.clear();
+      printers = list;
+      if (printers.length) render();
+      else notice('Add a printer in Setup on the printer PC.');
+    }
+  } catch (e) {
+    for (const tile of tiles.values()) tile.stop();
+    tiles.clear();
+    printers = [];
+    notice(e.message);
+  }
+  setTimeout(pollCloudPrinters, 8000);
+}
+
 async function start() {
   try {
     const me = await fetch('/api/me');
     const info = await me.json();
     if (!me.ok) { notice(info.error || 'Access denied'); return; }
+    monitorOnly = !!info.monitor_only;
+    if (monitorOnly) {
+      pushKey = info.push_key;
+      updateAlertsButton();
+      if (canNotify && pushKey && 'PushManager' in window) {
+        navigator.serviceWorker.ready.then(async registration => {
+          pushManager = registration.pushManager;
+          pushSubscription = await pushManager.getSubscription();
+          updateAlertsButton();
+        }).catch(() => {});
+      }
+      pollCloudPrinters();
+      return;
+    }
     maxUploadMb = info.max_upload_mb || maxUploadMb;
     document.getElementById('setup-link').classList.toggle('hidden', !info.admin);
     const list = await (await fetch('/api/printers')).json();

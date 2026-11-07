@@ -3,6 +3,7 @@
 const $ = id => document.getElementById(id);
 let tsRunning = false;
 let printers = [];
+let cloudUrl = '';
 const editedPrinters = new WeakSet();
 
 async function api(path, body) {
@@ -55,6 +56,14 @@ async function refresh() {
   const tsKey = [ts.installed, ts.state, ts.user, ts.detail, inst.state, inst.detail].join('|');
   if (tsKey !== lastTsKey) { lastTsKey = tsKey; body.replaceChildren(); renderTailscale(ts, body, inst); }
   renderPublish(st);
+  const connected = st.cloud?.connected;
+  setState('cloud-state', connected ? 'Connected' : cloudUrl ? 'Waiting for connection' : 'Optional', connected ? 'ok' : '');
+  $('open-cloud').classList.toggle('hidden', !connected);
+  if (cloudUrl) $('open-cloud').href = cloudUrl;
+  $('cloud-detail').textContent = cloudUrl ? st.cloud?.detail || '' : '';
+  if (connected && $('cloud-msg').textContent === 'Saved. Waiting for the host to connect.') {
+    $('cloud-msg').textContent = '';
+  }
 }
 
 let lastTsKey = '';
@@ -207,6 +216,28 @@ $('save-allowed').addEventListener('click', async () => {
     await api('/api/setup/config', { allowed_users: allowed });
     msg.className = 'msg ok';
     msg.textContent = 'Allowed accounts saved.';
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('save-cloud').addEventListener('click', async () => {
+  const url = $('cloud-url').value.trim().replace(/\/+$/, '');
+  const msg = $('cloud-msg');
+  const button = $('save-cloud');
+  button.disabled = true;
+  msg.className = 'msg';
+  msg.textContent = 'Saving…';
+  try {
+    await api('/api/setup/config', { cloud: { url, key: $('cloud-key').value.trim() } });
+    cloudUrl = url;
+    $('cloud-key').value = '';
+    $('cloud-key').placeholder = url ? 'Saved' : '';
+    msg.textContent = url ? 'Saved. Waiting for the host to connect.' : 'Cloud connection removed.';
+    refresh();
   } catch (e) {
     msg.className = 'msg bad';
     msg.textContent = e.message;
@@ -457,6 +488,9 @@ async function loadConfig() {
   const cfg = await api('/api/setup/config');
   printers = cfg.printers;
   $('allowed').value = cfg.allowed_users.join(', ');
+  cloudUrl = cfg.cloud.url;
+  $('cloud-url').value = cloudUrl;
+  $('cloud-key').placeholder = cfg.cloud.has_key ? 'Saved' : '';
   renderPrinters();
   renderNotifications(cfg.notifications, cfg.channels);
 }

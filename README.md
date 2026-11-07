@@ -8,8 +8,8 @@ enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a
 and confirm its camera appears. Setup and the dashboard work on that PC without
 a remote access account.
 
-**Remote access:** [Tailscale](https://tailscale.com) is optional in this build.
-Browser access through a Cloudflare Workers relay is planned for a later build.
+**Remote access:** Use the [Cloudflare dashboard](cloud/README.md) for browser
+access and phone alerts, or use the optional Tailscale integration.
 
 Works with a mix of printers:
 

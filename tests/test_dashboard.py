@@ -12,7 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dashboard import cameras, config, web, winsecret  # noqa: E402
+from dashboard import cameras, cloud, config, web, winsecret  # noqa: E402
 from dashboard.tlspin import CertificateChanged, PinStore  # noqa: E402
 from tests.mock_printer import MockPrinter  # noqa: E402
 
@@ -233,6 +233,35 @@ class DashboardTest(ServerFixture):
         conn.close()
 
     # ---------------------------------------------------------------- setup save
+
+    def test_cloud_settings_keep_the_connection_key_private(self):
+        path = "/api/setup/config"
+        headers = {"X-Dashboard": "1"}
+        url = "https://printers.account.workers.dev"
+        key = "a" * 43
+        try:
+            payload = {"cloud": {"url": url, "key": key}}
+            resp, data = self.request("POST", path, json.dumps(payload), headers, admin=True)
+            self.assertEqual(resp.status, 200, data)
+            resp, data = self.request("GET", path, admin=True)
+            self.assertEqual(json.loads(data)["cloud"], {"url": url, "has_key": True})
+            self.assertNotIn(key.encode(), data)
+            resp, data = self.request("POST", path, json.dumps({"cloud": {"url": url}}), headers, admin=True)
+            self.assertEqual(resp.status, 200, data)
+            self.assertEqual(config.secret(self.app.cfg["cloud"], "key"), key)
+        finally:
+            self.app.apply_setup({"cloud": {"url": ""}})
+
+    def test_cloud_report_excludes_printer_addresses_and_credentials(self):
+        connector = cloud.Connector(self.app)
+        with mock.patch.object(connector, "request", return_value={"cameras": []}) as send:
+            connector.sync({"url": "https://printers.account.workers.dev", "key": "a" * 43})
+        report = json.loads(send.call_args.args[2])
+        self.assertEqual({p["id"] for p in report["printers"]}, {"voron", "p1s"})
+        for printer in report["printers"]:
+            self.assertNotIn("host", printer)
+            self.assertNotIn("access_code", printer)
+            self.assertNotIn("api_key", printer)
 
     def test_setup_saves_allowed_accounts_separately(self):
         path = "/api/setup/config"

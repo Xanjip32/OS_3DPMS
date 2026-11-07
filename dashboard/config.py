@@ -20,6 +20,7 @@ DEFAULTS = {
     "require_tailscale_identity": True,
     "printers": [],
     "notifications": {},
+    "cloud": {},
 }
 
 NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline")
@@ -139,7 +140,24 @@ def _validate(raw):
         printers.append(p)
     cfg["printers"] = printers
     cfg["notifications"] = _validate_notifications(cfg.get("notifications"))
+    cfg["cloud"] = _validate_cloud(cfg["cloud"])
     return cfg
+
+
+def _validate_cloud(raw):
+    if not isinstance(raw, dict):
+        raise ConfigError("cloud settings must be an object")
+    url = str(raw.get("url") or "").strip().rstrip("/").lower()
+    if not url:
+        return {}
+    if not re.fullmatch(r"https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev", url):
+        raise ConfigError("Enter the HTTPS workers.dev dashboard address.")
+    key = str(raw.get("key") or "").strip()
+    if key and re.fullmatch(r"[a-zA-Z0-9_-]{43,128}", key):
+        return {"url": url, "key": key}
+    if not key and raw.get("key_protected"):
+        return {"url": url, "key_protected": raw["key_protected"]}
+    raise ConfigError("Enter a valid Cloudflare connection key.")
 
 
 def _validate_notifications(raw):
@@ -180,6 +198,7 @@ def protect_secrets(cfg):
     changed = False
     targets = [(p, SECRET_FIELDS) for p in cfg["printers"]]
     targets.append((cfg.get("notifications") or {}, NOTIFY_SECRETS))
+    targets.append((cfg.get("cloud") or {}, ("key",)))
     for obj, fields in targets:
         for field in fields:
             value = obj.get(field)
