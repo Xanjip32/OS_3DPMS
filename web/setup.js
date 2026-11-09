@@ -305,10 +305,20 @@ function renderPrinters(checkIds = new Set()) {
     advanced.append(field('Camera URL override', bind('webcam_url', el('input', {
       placeholder: 'http://camera-ip/webcam/?action=stream',
     }))));
+    const mirror = el('input', { type: 'checkbox' });
     advanced.append(field('Camera rotation', bind('rotate', rotate, 'int')));
-    advanced.append(el('label', { class: 'check' }, bind('flip_horizontal', el('input', { type: 'checkbox' }), 'bool'), 'Mirror camera'));
+    advanced.append(el('label', { class: 'check' }, bind('flip_horizontal', mirror, 'bool'), 'Mirror camera'));
     const msg = el('span', { class: 'msg', role: 'status' });
     const preview = el('div', { class: 'camera-preview' });
+    // Show the preview the same way the dashboard will: rotated and mirrored.
+    const orient = () => {
+      const img = preview.querySelector('img');
+      if (!img) return;
+      const parts = [];
+      if (p.rotate) parts.push(`rotate(${p.rotate}deg)`);
+      if (p.flip_horizontal) parts.push('scaleX(-1)');
+      img.style.transform = parts.join(' ');
+    };
     const needsSave = () => !p.id || editedPrinters.has(p);
     const check = el('button', { text: 'Check connection', onclick: async () => {
       check.disabled = true;
@@ -325,6 +335,7 @@ function renderPrinters(checkIds = new Set()) {
           preview.append(
             el('img', { src: `/snap/${encodeURIComponent(p.id)}?t=${Date.now()}`, alt: `Camera preview for ${p.name}` }),
             el('a', { class: 'btn', href: '/', text: 'Open live dashboard' }));
+          orient();
         }
       } catch (e) {
         if (needsSave()) return;
@@ -335,8 +346,15 @@ function renderPrinters(checkIds = new Set()) {
       }
     } });
     check.disabled = needsSave();
-    const markEdited = () => {
+    const markEdited = event => {
       editedPrinters.add(p);
+      // Rotation and mirroring only change how the picture is shown: keep the preview and turn it now.
+      if ((event.target === rotate || event.target === mirror) && preview.querySelector('img')) {
+        orient();
+        msg.className = 'msg';
+        msg.textContent = 'Click Save printers to keep this rotation.';
+        return;
+      }
       check.disabled = true;
       preview.replaceChildren();
       msg.className = 'msg';
