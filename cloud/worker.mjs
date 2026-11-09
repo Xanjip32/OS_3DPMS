@@ -124,7 +124,7 @@ async function finishLogin(request, env) {
     // secret, so its claims can be trusted without checking the JWT signature (OpenID Connect Core 3.1.3.7).
     const response = await fetch(GOOGLE_TOKEN, {
       method: 'POST',
-      redirect: 'error',
+      redirect: 'manual',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         code,
@@ -136,14 +136,31 @@ async function finishLogin(request, env) {
       }),
     });
     const tokens = await response.json();
+    // Google's error code only (for example invalid_client); never the code or tokens.
+    if (!tokens.id_token) {
+      console.log('google token error', response.status, tokens.error, tokens.error_description);
+      const reason = String(tokens.error || response.status).replace(/[^a-z0-9_]/gi, '').slice(0, 40);
+      return fail(`Google refused the sign-in (${reason}). Check the client ID and secret saved in the Worker.`);
+    }
     claims = JSON.parse(new TextDecoder().decode(unb64url(String(tokens.id_token).split('.')[1])));
-  } catch {
-    return fail('Google did not confirm the sign-in. Try again.');
+  } catch (error) {
+    console.log('google sign-in error', error?.name, error?.message);
+    const reason = String(error?.name || 'error').replace(/[^a-z0-9_]/gi, '').slice(0, 40);
+    return fail(`Google did not confirm the sign-in (${reason}). Try again.`);
   }
   const email = String(claims.email || '').toLowerCase();
   const valid = GOOGLE_ISSUERS.includes(claims.iss) && claims.aud === env.GOOGLE_CLIENT_ID
     && claims.nonce === login.nonce && claims.exp * 1000 > Date.now() && claims.email_verified === true;
-  if (!valid) return fail('Google did not confirm the sign-in. Try again.');
+  if (!valid) {
+    console.log('google claims rejected', { iss: claims.iss, audOk: claims.aud === env.GOOGLE_CLIENT_ID,
+      nonceOk: claims.nonce === login.nonce, expOk: claims.exp * 1000 > Date.now(), verified: claims.email_verified });
+  }
+  if (!valid) {
+    const failed = [!GOOGLE_ISSUERS.includes(claims.iss) && 'issuer', claims.aud !== env.GOOGLE_CLIENT_ID && 'client',
+      claims.nonce !== login.nonce && 'nonce', !(claims.exp * 1000 > Date.now()) && 'expired',
+      claims.email_verified !== true && 'unverified email'].filter(Boolean).join(', ');
+    return fail(`Google did not confirm the sign-in (${failed}). Try again.`);
+  }
   if (email !== env.OWNER_EMAIL.toLowerCase()) {
     return fail('This Google account is not allowed on this dashboard. Sign in with the owner account.');
   }
@@ -361,7 +378,7 @@ export class PrinterRelay {
         publicKey: this.env.VAPID_PUBLIC_KEY,
         privateKey: this.env.VAPID_PRIVATE_KEY,
       });
-      const response = await fetch(subscription.endpoint, { ...payload, redirect: 'error' });
+      const response = await fetch(subscription.endpoint, { ...payload, redirect: 'manual' });
       if (response.status === 404 || response.status === 410) {
         await this.ctx.storage.delete(this.pushPrefix + subscription.endpoint);
       }
