@@ -10,27 +10,122 @@
 <meta name="theme-color" content="#f6f8fa">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Printers">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body class="dashboard-page">
 <header class="app-header">
-  <a class="brand" href="/"><img src="/icon-192.png" alt="" width="30" height="30">OS_3DPMS</a>
-  <nav aria-label="Main">
-    <a href="/" aria-current="page">Dashboard</a>
-    <a id="setup-link" class="hidden" href="/setup">Setup</a>
-  </nav>
+  <a class="brand" href="#/dashboard"><img src="/icon-192.png" alt="" width="28" height="28"><span>OS_3DPMS</span></a>
+  <span class="crumb" id="crumb">Dashboard</span>
   <div class="header-actions">
-    <span class="menu-wrap">
-      <button id="hidden-btn" class="hidden" aria-haspopup="true" aria-expanded="false"></button>
-      <div id="hidden-menu" class="menu hidden"></div>
-    </span>
     <button id="install" class="hidden" title="Install as an app on this device">Install app</button>
     <button id="alerts" class="hidden" title="Show a pop-up when a print finishes or fails">Enable alerts</button>
+    <span class="user-chip" id="who"></span>
   </div>
 </header>
-<main class="grid" id="grid" aria-label="Printer dashboard"></main>
+
+<nav class="sidebar" aria-label="Main">
+  <a href="#/dashboard" data-nav="dashboard" title="Dashboard">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Dashboard</span></a>
+  <a href="#/devices" data-nav="devices" title="Devices">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="11" rx="1.5"/><path d="M9 14v3h6v-3M6 21h12M12 17v4"/></svg><span>Devices</span></a>
+  <a href="#/queue" data-nav="queue" title="Queue">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="6" height="6" rx="1"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 6h8M13 9h5M13 16h8M13 19h5"/></svg><span>Queue</span></a>
+  <a href="#/files" data-nav="files" title="Files">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg><span>Files</span></a>
+  <a href="#/settings" data-nav="settings" title="Settings">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span>Settings</span></a>
+</nav>
+
+<main class="content">
+  <!-- ------------------------------------------------------------ dashboard -->
+  <section class="page" data-page="dashboard">
+    <div class="page-head">
+      <h1>Dashboard</h1>
+      <div class="counts" id="counts"></div>
+    </div>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search printers…" aria-label="Search printers">
+      <div class="segmented" role="group" aria-label="Filter">
+        <button data-filter="all" aria-pressed="true">All</button>
+        <button data-filter="active" aria-pressed="false">Active</button>
+        <button data-filter="inactive" aria-pressed="false">Inactive</button>
+      </div>
+      <div class="segmented" role="group" aria-label="View">
+        <button data-view="grid" aria-pressed="true" title="Camera grid" aria-label="Camera grid">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg></button>
+        <button data-view="list" aria-pressed="false" title="List" aria-label="List">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/></svg></button>
+      </div>
+      <span class="menu-wrap">
+        <button id="hidden-btn" class="hidden" aria-haspopup="true" aria-expanded="false"></button>
+        <div id="hidden-menu" class="menu hidden"></div>
+      </span>
+      <span class="grow"></span>
+      <a class="btn primary hidden admin-only" href="/setup">+ Add printer</a>
+    </div>
+    <div class="grid" id="grid" aria-label="Printer cameras"></div>
+    <div class="table-wrap hidden" id="list"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ devices -->
+  <section class="page" data-page="devices" hidden>
+    <div class="page-head"><h1>Devices</h1><div class="counts" id="device-counts"></div></div>
+    <div class="toolbar">
+      <input id="device-search" type="search" placeholder="Search devices…" aria-label="Search devices">
+      <span class="grow"></span>
+      <a class="btn primary hidden admin-only" href="/setup">+ Add or edit printers</a>
+    </div>
+    <div class="table-wrap" id="devices"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ queue -->
+  <section class="page" data-page="queue" hidden>
+    <div class="page-head"><h1>Queue</h1></div>
+    <div class="empty-card">
+      <strong>Print queue is coming next</strong>
+      <p>Line up jobs and OS_3DPMS sends the next one when a printer is free and you confirm the bed is clear.</p>
+      <p>For now: use <b>Send file</b> on a printer card on the Dashboard.</p>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ files -->
+  <section class="page" data-page="files" hidden>
+    <div class="page-head"><h1>Files</h1></div>
+    <div class="empty-card">
+      <strong>File library is coming next</strong>
+      <p>Upload a G-code file once, keep it on the printer PC, and send it to any printer.</p>
+      <p>For now: drag a file onto a printer card on the Dashboard.</p>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ settings -->
+  <section class="page" data-page="settings" hidden>
+    <div class="page-head"><h1>Settings</h1></div>
+    <div class="settings-grid">
+      <div class="card">
+        <h2>Account</h2>
+        <p id="account-text"></p>
+      </div>
+      <div class="card">
+        <h2>Printers and notifications</h2>
+        <p id="setup-text"></p>
+        <div class="actions"><a class="btn primary hidden admin-only" href="/setup">Open setup</a></div>
+      </div>
+      <div class="card">
+        <h2>This device</h2>
+        <p>Install the dashboard as an app and turn on alerts for this phone or PC.</p>
+        <div class="actions" id="device-actions"></div>
+      </div>
+      <div class="card">
+        <h2>Hidden cameras</h2>
+        <p>Cameras you hide are hidden on this device only.</p>
+        <div class="actions" id="hidden-list"></div>
+      </div>
+    </div>
+  </section>
+</main>
 
 <div id="modal">
   <div class="mtop">

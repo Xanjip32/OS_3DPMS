@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- New dashboard layout: left sidebar (bottom tabs on phones) with Dashboard, Devices, Queue,
+  Files and Settings pages
+- Dashboard shows printing / paused / idle / offline counts, search, All / Active / Inactive
+  filters, and a camera grid or list view
+- Devices page lists every printer with type, status and quick buttons; Settings page shows the
+  signed-in account, app install, alerts and hidden cameras
+- Cloud dashboard shows the signed-in Gmail address; docs explain Google sign-in with
+  Cloudflare Access
+
 - Connect a Windows printer host to a protected Cloudflare Workers dashboard for camera previews and status.
 - Receive print alerts directly from the installed cloud dashboard through Web Push.
 

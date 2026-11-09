@@ -35,6 +35,7 @@ test('private viewer can request a photo, but only the paired host can publish o
   assert.equal((await fetch('/', {}, {})).status, 403);
   assert.equal((await fetch('/api/printers', {}, { access: { ...viewer.access, aud: 'other' } })).status, 403);
   assert.equal((await fetch('/api/printers', {}, { access: { ...viewer.access, getIdentity: async () => ({ email: 'other@example.com' }) } })).status, 403);
+  assert.equal((await (await fetch('/api/me')).json()).user, owner);
   assert.equal((await fetch('/setup')).status, 404);
   assert.equal((await fetch('/api/upload/voron', { method: 'POST' })).status, 404);
   assert.equal((await fetch('/connector', { method: 'POST', body: '{}' }, {})).status, 403);

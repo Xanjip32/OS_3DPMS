@@ -38,6 +38,26 @@ Keep the connection key and private push key in a password manager. If you
 replace the push keys, subscribe again from each device. A change to the host
 key requires updating it in the host's Setup page.
 
+## Sign in with Gmail
+
+Cloudflare Access can use Google as the sign-in page, so you open the cloud dashboard with
+your Gmail account (free).
+
+1. In Google Cloud Console, create a project, then **APIs & Services → OAuth consent screen**
+   (External, add your Gmail as a test user) and **Credentials → Create credentials → OAuth
+   client ID → Web application**.
+2. Under **Authorized redirect URIs**, add
+   `https://<your-team-name>.cloudflareaccess.com/cdn-cgi/access/callback`
+   (your team name is shown in Zero Trust → Settings → Custom pages / Team domain).
+3. In **Cloudflare Zero Trust → Settings → Authentication → Login methods → Add new → Google**,
+   paste the client ID and client secret, then click **Test**.
+4. Open the dashboard's Access application, enable **Google** under login methods (you can turn
+   off One-time PIN), and keep the **Allow** policy limited to your Gmail address.
+5. Set `OWNER_EMAIL` to the same Gmail address. The dashboard shows who is signed in on the
+   Settings page.
+
+Turn on 2-Step Verification for that Google account: whoever controls it can see your printers.
+
 ## Phone alerts
 
 - **iPhone or iPad** on iOS/iPadOS 16.4 or later. Open the dashboard in Safari,

@@ -18,10 +18,12 @@ async function connectorAuthorized(request, key) {
   return a.reduce((difference, byte, i) => difference | (byte ^ b[i]), 0) === 0;
 }
 
-async function viewerAuthorized(ctx, env) {
-  if (!env.ACCESS_AUD || ctx.access?.aud !== env.ACCESS_AUD || !env.OWNER_EMAIL) return false;
+// Returns the signed-in owner's email, or '' when the viewer is not the owner.
+async function viewerEmail(ctx, env) {
+  if (!env.ACCESS_AUD || ctx.access?.aud !== env.ACCESS_AUD || !env.OWNER_EMAIL) return '';
   const identity = await ctx.access.getIdentity();
-  return identity?.email?.toLowerCase() === env.OWNER_EMAIL.toLowerCase();
+  const email = identity?.email?.toLowerCase() || '';
+  return email && email === env.OWNER_EMAIL.toLowerCase() ? email : '';
 }
 
 export default {
@@ -33,14 +35,15 @@ export default {
       if (!await connectorAuthorized(request, env.CONNECTOR_KEY)) return json({ error: 'Invalid connection key.' }, 403);
       return env.RELAY.getByName('host').fetch(request);
     }
-    if (!await viewerAuthorized(ctx, env)) return json({ error: 'Sign in with the dashboard owner account.' }, 403);
+    const viewer = await viewerEmail(ctx, env);
+    if (!viewer) return json({ error: 'Sign in with the dashboard owner account.' }, 403);
     if (method === 'GET' && Object.hasOwn(assets, path)) {
       const asset = assets[path];
       return new Response(Uint8Array.from(atob(asset.base64), c => c.charCodeAt(0)),
         { headers: { ...headers, 'Content-Type': asset.type } });
     }
     if (method === 'GET' && path === '/api/me') {
-      return json({ monitor_only: true, push_key: env.VAPID_PUBLIC_KEY || '' });
+      return json({ monitor_only: true, user: viewer, push_key: env.VAPID_PUBLIC_KEY || '' });
     }
     if (method === 'GET' && (path === '/api/printers' || /^\/(snap|api\/status)\/[a-z0-9-]+$/.test(path))) {
       return env.RELAY.getByName('host').fetch(request);

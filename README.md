@@ -18,7 +18,9 @@ Works with a mix of printers:
 
 ## Features
 
-- Four camera cards fit on a desktop screen, with more below. Cards stack on phones.
+- Simple navigation: Dashboard, Devices, Queue, Files and Settings in a sidebar (bottom tabs on phones)
+- Status counts, search, All / Active / Inactive filters, and camera grid or list view
+- Camera cards fill the screen on a desktop and stack on phones
 - Click a camera to enlarge it. Use the Mainsail button to open printer controls.
 - Drag and drop G-code upload, with an optional "start print" (skipped when the printer is busy)
 - Print status and progress for Klipper and Bambu printers

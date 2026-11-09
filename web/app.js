@@ -1,8 +1,11 @@
 'use strict';
 
 const FRAME_MS = 200;               // grid refresh: about 5 frames per second per camera
+const STATUS_MS = 5000;
 const UPLOAD_RE = /\.(gcode|gco|g|3mf)$/i;
-const grid = document.getElementById('grid');
+const ACTIVE = new Set(['printing', 'paused']);
+const $ = id => document.getElementById(id);
+const grid = $('grid');
 const visibleCameras = new WeakSet();
 const cameraObserver = new IntersectionObserver(entries => {
   for (const entry of entries) {
@@ -10,12 +13,38 @@ const cameraObserver = new IntersectionObserver(entries => {
     else visibleCameras.delete(entry.target);
   }
 });
+
+let info = {};
 let maxUploadMb = 1024;
 let monitorOnly = false;
 let pushKey = '';
 let pushRegistered = false;
 let pushManager = null;
 let pushSubscription = null;
+
+let printers = [];
+const statuses = new Map();          // printer id -> last status from the server
+const tiles = new Map();             // printer id -> camera card
+
+// ---------------------------------------------------------------- small helpers
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  kids.forEach(k => e.append(k));
+  return e;
+}
+
+function load(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
+}
+function save(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* no storage */ }
+}
 
 function mainsailUrl(p) {
   return `${location.protocol}//${location.hostname}:${p.ui_port}/`;
@@ -32,23 +61,39 @@ function camTransform(p) {
 }
 
 function toast(msg, bad) {
-  const el = document.createElement('div');
-  el.className = 'toast' + (bad ? ' bad' : '');
-  el.textContent = msg;
-  document.getElementById('toasts').appendChild(el);
-  setTimeout(() => el.remove(), bad ? 10000 : 5000);
+  const t = el('div', { class: 'toast' + (bad ? ' bad' : ''), text: msg });
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), bad ? 10000 : 5000);
+}
+
+function stateOf(p) {
+  return (statuses.get(p.id) || {}).state || 'unknown';
+}
+
+function stateText(st) {
+  if (!st || !st.state || st.state === 'unknown') return 'No status';
+  const label = st.state[0].toUpperCase() + st.state.slice(1);
+  return ACTIVE.has(st.state) ? `${label} ${Math.round((st.progress || 0) * 100)}%` : label;
+}
+
+function chip(st) {
+  return el('span', { class: 'chip ' + ((st && st.state) || ''), text: stateText(st) });
+}
+
+function canMainsail(p) {
+  return !monitorOnly && p.ui_port;
 }
 
 // ---------------------------------------------------------------- live view
-const modal = document.getElementById('modal');
-const mimg = document.getElementById('mimg');
+const modal = $('modal');
+const mimg = $('mimg');
 let modalPrinter = null;
 let modalTimer;
 
 function openModal(p) {
   modalPrinter = p;
-  document.getElementById('mname').textContent = p.name;
-  document.getElementById('mopen').classList.toggle('hidden', !p.ui_port);
+  $('mname').textContent = p.name;
+  $('mopen').classList.toggle('hidden', !canMainsail(p));
   mimg.style.transform = camTransform(p);
   if (monitorOnly) {
     const refresh = () => {
@@ -67,45 +112,54 @@ function closeModal() {
   mimg.removeAttribute('src');
   modalPrinter = null;
 }
-document.getElementById('mclose').addEventListener('click', closeModal);
-document.getElementById('mopen').addEventListener('click', () => window.open(mainsailUrl(modalPrinter), '_blank', 'noopener'));
+$('mclose').addEventListener('click', closeModal);
+$('mopen').addEventListener('click', () => window.open(mainsailUrl(modalPrinter), '_blank', 'noopener'));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-// A file dropped outside a tile must not open in the browser.
+// A file dropped outside a card must not open in the browser.
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => e.preventDefault());
 
-// ---------------------------------------------------------------- tiles
+// ---------------------------------------------------------------- camera cards
 function buildTile(p) {
-  const t = document.getElementById('tile-template').content.firstElementChild.cloneNode(true);
-  const $ = sel => t.querySelector(sel);
+  const t = $('tile-template').content.firstElementChild.cloneNode(true);
+  const q = sel => t.querySelector(sel);
   const id = encodeURIComponent(p.id);
 
-  $('.name').textContent = p.name;
-  $('.target').textContent = p.name;
-  $('.drop').textContent = `Drop to send to ${p.name}`;
-  $('.open').textContent = 'Live view';
-  $('.view').setAttribute('aria-label', `View camera for ${p.name}`);
-  if (!p.ui_port) $('.ui').remove();
+  q('.name').textContent = p.name;
+  q('.target').textContent = p.name;
+  q('.drop').textContent = `Drop to send to ${p.name}`;
+  q('.open').textContent = 'Live view';
+  q('.view').setAttribute('aria-label', `View camera for ${p.name}`);
+  if (!canMainsail(p)) q('.ui').remove();
 
-  const img = $('.view img');
-  const chip = $('.chip');
-  const fileLine = $('.file');
-  const nocam = $('.view .nocam');
-  const bar = $('.progress > div');
-  const input = $('input[type=file]');
-  const sendBtn = $('.send');
+  const img = q('.view img');
+  const chipEl = q('.chip');
+  const fileLine = q('.file');
+  const nocam = q('.view .nocam');
+  const bar = q('.progress > div');
+  const input = q('input[type=file]');
+  const sendBtn = q('.send');
   if (monitorOnly) sendBtn.classList.add('hidden');
-  const startBox = $('.start');
+  const startBox = q('.start');
   let pending = null;
   let busy = false;
   let stopped = false;
+
   t.stop = () => {
     stopped = true;
     cameraObserver.unobserve(t);
     img.removeAttribute('src');
   };
-  $('.hide').addEventListener('click', e => {
+  t.update = st => {
+    chipEl.textContent = st && st.state ? stateText(st) : '';
+    chipEl.className = 'chip ' + ((st && st.state) || '');
+    if (!busy) fileLine.textContent = st && ACTIVE.has(st.state) ? (st.file || '') : '';
+  };
+  t.pick = () => { if (!monitorOnly) input.click(); };
+  t.isBusy = () => busy;
+
+  q('.hide').addEventListener('click', e => {
     e.stopPropagation();
     if (busy) { toast(`${p.name}: wait until the upload finishes`, true); return; }
     hidePrinter(p.id, true);
@@ -113,7 +167,7 @@ function buildTile(p) {
 
   img.style.transform = camTransform(p);
 
-  // Camera: poll snapshots. Short requests keep browser connections free.
+  // Camera: poll snapshots while the card is on screen. Short requests keep connections free.
   function nextFrame() {
     if (stopped) return;
     if (document.hidden || !visibleCameras.has(t) || modal.classList.contains('show')) {
@@ -124,6 +178,7 @@ function buildTile(p) {
   }
   img.addEventListener('load', () => { t.classList.remove('nocam'); setTimeout(nextFrame, monitorOnly ? 4000 : FRAME_MS); });
   img.addEventListener('error', () => {
+    if (stopped) return;
     t.classList.add('nocam');
     nocam.textContent = 'Camera offline. Retrying…';
     setTimeout(nextFrame, 3000);
@@ -132,32 +187,13 @@ function buildTile(p) {
   nextFrame();
 
   const openUi = () => window.open(mainsailUrl(p), '_blank', 'noopener');
-  $('.view').addEventListener('click', () => openModal(p));
-  $('.live').addEventListener('click', () => openModal(p));
-  if (p.ui_port) $('.ui').addEventListener('click', openUi);
-
-  // Status (Klipper printers)
-  async function status() {
-    if (stopped) return;
-    try {
-      const r = await fetch(`/api/status/${id}`);
-      if (r.ok) {
-        const s = await r.json();
-        if (s.state) {
-          const active = s.state === 'printing' || s.state === 'paused';
-          chip.textContent = s.state[0].toUpperCase() + s.state.slice(1) + (active ? ` ${Math.round(s.progress * 100)}%` : '');
-          chip.className = 'chip ' + s.state;
-          if (!busy) fileLine.textContent = active ? s.file : '';
-        }
-      }
-    } catch (e) { /* dashboard restarting */ }
-    setTimeout(status, 5000);
-  }
-  status();
+  q('.view').addEventListener('click', () => openModal(p));
+  q('.live').addEventListener('click', () => openModal(p));
+  if (canMainsail(p)) q('.ui').addEventListener('click', openUi);
 
   // Upload: drag and drop, or file picker
   let depth = 0;
-  t.addEventListener('dragenter', e => { e.preventDefault(); depth++; t.classList.add('drag'); });
+  t.addEventListener('dragenter', e => { e.preventDefault(); if (monitorOnly) return; depth++; t.classList.add('drag'); });
   t.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; t.classList.remove('drag'); } });
   t.addEventListener('dragover', e => e.preventDefault());
   t.addEventListener('drop', e => {
@@ -168,7 +204,7 @@ function buildTile(p) {
   });
   sendBtn.addEventListener('click', () => input.click());
   input.addEventListener('change', () => { if (input.files.length) ask(input.files[0]); input.value = ''; });
-  startBox.addEventListener('change', () => $('.warn').classList.toggle('hidden', !startBox.checked));
+  startBox.addEventListener('change', () => q('.warn').classList.toggle('hidden', !startBox.checked));
 
   function ask(file) {
     if (monitorOnly) return;
@@ -176,13 +212,13 @@ function buildTile(p) {
     if (!UPLOAD_RE.test(file.name)) { toast('Only .gcode or .3mf files', true); return; }
     if (file.size > maxUploadMb * 1048576) { toast(`File is larger than ${maxUploadMb} MB`, true); return; }
     pending = file;
-    $('.fname').textContent = `${file.name} (${(file.size / 1048576).toFixed(1)} MB)`;
+    q('.fname').textContent = `${file.name} (${(file.size / 1048576).toFixed(1)} MB)`;
     startBox.checked = false;
-    $('.warn').classList.add('hidden');
+    q('.warn').classList.add('hidden');
     t.classList.add('confirming');
   }
-  $('.cancel').addEventListener('click', () => { pending = null; t.classList.remove('confirming'); });
-  $('.go').addEventListener('click', () => {
+  q('.cancel').addEventListener('click', () => { pending = null; t.classList.remove('confirming'); });
+  q('.go').addEventListener('click', () => {
     t.classList.remove('confirming');
     upload(pending, startBox.checked);
     pending = null;
@@ -217,29 +253,252 @@ function buildTile(p) {
     xhr.send(file);
   }
 
+  t.update(statuses.get(p.id));
   return t;
 }
 
-function notice(text, localSetup = false) {
-  const panel = document.createElement('div');
-  panel.className = 'notice';
-  const message = document.createElement('p');
-  message.textContent = text;
-  panel.append(message);
-  if (localSetup) {
-    const link = document.createElement('a');
-    link.className = 'btn primary';
-    link.href = '/setup';
-    link.textContent = 'Add a printer';
-    panel.append(link);
+// ---------------------------------------------------------------- dashboard filters and views
+let filter = load('os3dpms.filter', 'all');
+let view = load('os3dpms.view', 'grid');
+let query = '';
+let hiddenIds = new Set(load('os3dpms.hidden', []));
+
+function matches(p) {
+  if (query && !p.name.toLowerCase().includes(query)) return false;
+  const active = ACTIVE.has(stateOf(p));
+  return filter === 'all' || (filter === 'active' ? active : !active);
+}
+
+function setPressed(attr, value) {
+  document.querySelectorAll(`[${attr}]`).forEach(b => b.setAttribute('aria-pressed', String(b.getAttribute(attr) === value)));
+}
+
+document.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () => {
+  filter = b.getAttribute('data-filter');
+  save('os3dpms.filter', filter);
+  refresh();
+}));
+document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
+  view = b.getAttribute('data-view');
+  save('os3dpms.view', view);
+  refresh();
+}));
+$('search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); refresh(); });
+$('device-search').addEventListener('input', () => renderDevices());
+
+function hidePrinter(id, hide) {
+  if (hide) hiddenIds.add(id); else hiddenIds.delete(id);
+  save('os3dpms.hidden', [...hiddenIds]);
+  render();
+}
+
+function notice(container, text, localSetup = false) {
+  const panel = el('div', { class: 'empty-card' }, el('strong', { text }));
+  if (localSetup) panel.append(el('div', { class: 'actions' }, el('a', { class: 'btn primary', href: '/setup', text: 'Add a printer' })));
+  container.replaceChildren(panel);
+}
+
+// Create or remove camera cards to match the printer list and hidden cameras.
+function render() {
+  for (const p of printers) {
+    const tile = tiles.get(p.id);
+    if (!hiddenIds.has(p.id) && !tile) tiles.set(p.id, buildTile(p));
+    if (hiddenIds.has(p.id) && tile) { tile.stop(); tiles.delete(p.id); }
   }
-  grid.replaceChildren(panel);
+  for (const [id, tile] of tiles) {
+    if (!printers.some(p => p.id === id)) { tile.stop(); tiles.delete(id); }
+  }
+  grid.replaceChildren(...printers.filter(p => tiles.has(p.id)).map(p => tiles.get(p.id)));
+  refresh();
+}
+
+// Update everything that depends on status, filters or the view.
+function refresh() {
+  setPressed('data-filter', filter);
+  setPressed('data-view', view);
+  for (const p of printers) {
+    const tile = tiles.get(p.id);
+    if (!tile) continue;
+    tile.update(statuses.get(p.id));
+    tile.classList.toggle('filtered', !matches(p));
+  }
+  const shown = printers.filter(p => !hiddenIds.has(p.id) && matches(p));
+  grid.classList.toggle('hidden', view !== 'grid');
+  $('list').classList.toggle('hidden', view !== 'list');
+  grid.querySelector(':scope > .empty-card')?.remove();
+  if (!printers.length) {
+    notice(grid, info.admin ? 'No printers yet.' : 'No printers yet. Add them in Setup on the printer PC.', info.admin);
+    $('list').replaceChildren();
+  } else if (!shown.length) {
+    const why = printers.every(p => hiddenIds.has(p.id)) ? 'All cameras are hidden. Use "Hidden" above to show them.'
+      : 'No printers match this filter.';
+    grid.append(el('div', { class: 'empty-card' }, el('strong', { text: why })));
+  }
+  if (view === 'list' && printers.length) renderList(shown);
+  renderCounts();
+  renderDevices();
+  renderHiddenMenu();
+  renderSettings();
+}
+
+function renderCounts() {
+  const count = s => printers.filter(p => stateOf(p) === s).length;
+  const offline = printers.filter(p => ['unknown', 'offline', 'error'].includes(stateOf(p))).length;
+  const idle = printers.length - count('printing') - count('paused') - offline;
+  const item = (n, label, kind) => el('span', { class: 'count ' + kind }, el('i'), el('b', { text: String(n) }), ' ' + label);
+  const parts = [item(count('printing'), 'printing', 'ok'), item(count('paused'), 'paused', 'warn'),
+    item(idle, 'idle', 'idle'), item(offline, 'offline / error', 'bad')];
+  $('counts').replaceChildren(...parts);
+  $('device-counts').replaceChildren(item(printers.length, printers.length === 1 ? 'printer' : 'printers', 'idle'));
+}
+
+function actionButtons(p, withSend) {
+  const box = el('div', { class: 'row-actions' });
+  box.append(el('button', { text: 'Camera', onclick: () => openModal(p) }));
+  if (canMainsail(p)) box.append(el('button', { text: 'Mainsail', onclick: () => window.open(mainsailUrl(p), '_blank', 'noopener') }));
+  if (withSend && !monitorOnly && tiles.has(p.id)) {
+    box.append(el('button', { class: 'primary', text: 'Send file', onclick: () => {
+      view = 'grid';
+      save('os3dpms.view', view);
+      refresh();
+      tiles.get(p.id).scrollIntoView({ behavior: 'smooth', block: 'center' });
+      tiles.get(p.id).pick();
+    } }));
+  }
+  return box;
+}
+
+function table(columns, rows) {
+  const head = el('tr', {}, ...columns.map(c => el('th', { text: c.label, class: c.class || '' })));
+  const body = rows.map(p => el('tr', {}, ...columns.map(c => {
+    const value = c.cell(p);
+    const td = el('td', { class: c.class || '', 'data-label': c.label });
+    td.append(value instanceof Node ? value : document.createTextNode(value ?? ''));
+    return td;
+  })));
+  return el('table', {}, el('thead', {}, head), el('tbody', {}, ...body));
+}
+
+function progressCell(p) {
+  const st = statuses.get(p.id) || {};
+  if (!ACTIVE.has(st.state)) return '—';
+  const pct = Math.round((st.progress || 0) * 100);
+  const bar = el('span', { class: 'mini-bar' }, el('span'));
+  bar.firstChild.style.width = pct + '%';
+  return el('span', { class: 'progress-cell' }, bar, el('span', { text: pct + '%' }));
+}
+
+function renderList(rows) {
+  $('list').replaceChildren(table([
+    { label: 'Name', cell: p => el('b', { text: p.name }) },
+    { label: 'Status', cell: p => chip(statuses.get(p.id)) },
+    { label: 'Progress', cell: progressCell },
+    { label: 'File', class: 'muted', cell: p => (ACTIVE.has(stateOf(p)) && statuses.get(p.id).file) || '—' },
+    { label: '', class: 'actions-col', cell: p => actionButtons(p, true) },
+  ], rows));
+}
+
+function renderDevices() {
+  const box = $('devices');
+  if (!printers.length) { notice(box, 'No printers yet.', info.admin); return; }
+  const term = $('device-search').value.trim().toLowerCase();
+  const rows = printers.filter(p => !term || p.name.toLowerCase().includes(term) || (p.type || '').includes(term));
+  box.replaceChildren(table([
+    { label: 'Name', cell: p => el('b', { text: p.name }) },
+    { label: 'Type', cell: p => (p.type === 'bambu' ? 'Bambu Lab' : 'Klipper') },
+    { label: 'Status', cell: p => chip(statuses.get(p.id)) },
+    { label: 'Progress', cell: progressCell },
+    { label: 'Camera', class: 'muted', cell: p => (hiddenIds.has(p.id) ? 'Hidden on this device' : (p.rotate ? `Rotated ${p.rotate}°` : 'Shown')) },
+    { label: '', class: 'actions-col', cell: p => actionButtons(p, false) },
+  ], rows));
+}
+
+// ---------------------------------------------------------------- hidden cameras menu
+const hiddenBtn = $('hidden-btn');
+const hiddenMenu = $('hidden-menu');
+
+function showButtons() {
+  const hiddenList = printers.filter(p => hiddenIds.has(p.id));
+  const items = hiddenList.map(p => el('button', { text: `Show ${p.name}`, onclick: () => hidePrinter(p.id, false) }));
+  if (hiddenList.length > 1) {
+    items.push(el('button', { class: 'primary', text: 'Show all', onclick: () => {
+      hiddenIds.clear();
+      save('os3dpms.hidden', []);
+      render();
+    } }));
+  }
+  return items;
+}
+
+function renderHiddenMenu() {
+  const n = printers.filter(p => hiddenIds.has(p.id)).length;
+  hiddenBtn.classList.toggle('hidden', !n);
+  hiddenBtn.textContent = `Hidden (${n})`;
+  hiddenMenu.replaceChildren(...showButtons());
+  if (!n) toggleMenu(false);
+}
+
+function toggleMenu(open) {
+  // Open towards the middle of the screen so the menu never runs off an edge.
+  const onRight = hiddenBtn.getBoundingClientRect().left > window.innerWidth / 2;
+  hiddenMenu.style.left = onRight ? 'auto' : '0';
+  hiddenMenu.style.right = onRight ? '0' : 'auto';
+  hiddenMenu.classList.toggle('hidden', !open);
+  hiddenBtn.setAttribute('aria-expanded', String(open));
+}
+hiddenBtn.addEventListener('click', e => { e.stopPropagation(); toggleMenu(hiddenMenu.classList.contains('hidden')); });
+document.addEventListener('click', e => { if (!hiddenMenu.contains(e.target)) toggleMenu(false); });
+
+// ---------------------------------------------------------------- settings page
+function renderSettings() {
+  $('account-text').textContent = monitorOnly
+    ? `Signed in as ${info.user || 'the dashboard owner'}. This is the cloud dashboard: it shows cameras and status from anywhere.`
+    : info.admin ? 'You are on the printer PC itself.'
+      : `Signed in through Tailscale as ${info.user || 'a tailnet user'}.`;
+  $('setup-text').textContent = info.admin
+    ? 'Add or edit printers, phone notifications and the cloud dashboard.'
+    : 'Printers, notifications and the cloud connection are set up on the printer PC (Setup page).';
+  const actions = [];
+  if (!installBtn.classList.contains('hidden')) actions.push(el('button', { text: 'Install app', onclick: () => installBtn.click() }));
+  if (!alertsBtn.classList.contains('hidden')) actions.push(el('button', { text: alertsBtn.textContent, onclick: () => alertsBtn.click() }));
+  if (!actions.length) actions.push(el('span', { class: 'muted', text: standalone ? 'Installed as an app.' : 'Nothing to set up here.' }));
+  $('device-actions').replaceChildren(...actions);
+  const show = showButtons();
+  $('hidden-list').replaceChildren(...(show.length ? show : [el('span', { class: 'muted', text: 'No hidden cameras.' })]));
+}
+
+// ---------------------------------------------------------------- pages
+const PAGES = { dashboard: 'Dashboard', devices: 'Devices', queue: 'Queue', files: 'Files', settings: 'Settings' };
+
+function route() {
+  let page = location.hash.replace(/^#\/?/, '');
+  if (!PAGES[page]) page = 'dashboard';
+  document.querySelectorAll('[data-page]').forEach(s => { s.hidden = s.getAttribute('data-page') !== page; });
+  document.querySelectorAll('[data-nav]').forEach(a => {
+    if (a.getAttribute('data-nav') === page) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
+  $('crumb').textContent = PAGES[page];
+  document.title = `${PAGES[page]} · Printers`;
+}
+window.addEventListener('hashchange', route);
+
+// ---------------------------------------------------------------- status
+async function pollStatuses() {
+  await Promise.all(printers.map(async p => {
+    try {
+      const r = await fetch(`/api/status/${encodeURIComponent(p.id)}`);
+      if (r.ok) statuses.set(p.id, await r.json());
+    } catch (e) { /* dashboard restarting */ }
+  }));
+  refresh();
+  setTimeout(pollStatuses, STATUS_MS);
 }
 
 // ---------------------------------------------------------------- alerts
 // Print events (finished, failed, paused...) show as a toast, and as a system
 // pop-up when the browser allows notifications (needs HTTPS or localhost).
-const alertsBtn = document.getElementById('alerts');
+const alertsBtn = $('alerts');
 const canNotify = 'Notification' in window && window.isSecureContext;
 function updateAlertsButton() {
   if (monitorOnly) {
@@ -248,6 +507,7 @@ function updateAlertsButton() {
   } else {
     alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission !== 'default');
   }
+  renderSettings();
 }
 alertsBtn.addEventListener('click', async () => {
   try {
@@ -281,7 +541,7 @@ let swReg = null;
 if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('/sw.js').then(r => { swReg = r; }).catch(() => {});
 }
-const installBtn = document.getElementById('install');
+const installBtn = $('install');
 const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -290,8 +550,9 @@ window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   installPrompt = e;
   installBtn.classList.remove('hidden');
+  renderSettings();
 });
-window.addEventListener('appinstalled', () => installBtn.classList.add('hidden'));
+window.addEventListener('appinstalled', () => { installBtn.classList.add('hidden'); renderSettings(); });
 if (isIOS && !standalone) installBtn.classList.remove('hidden');
 installBtn.addEventListener('click', async () => {
   if (installPrompt) {
@@ -299,6 +560,7 @@ installBtn.addEventListener('click', async () => {
     await installPrompt.userChoice.catch(() => null);
     installPrompt = null;
     installBtn.classList.add('hidden');
+    renderSettings();
   } else if (isIOS) {
     toast('In Safari: tap the Share button (square with arrow), then "Add to Home Screen".');
   }
@@ -331,99 +593,43 @@ async function pollEvents() {
   setTimeout(pollEvents, 5000);
 }
 
-// ---------------------------------------------------------------- hidden cameras
-// Hidden cameras are remembered per device (this browser only) and stop streaming.
-const HIDDEN_KEY = 'os3dpms.hidden';
-const hiddenBtn = document.getElementById('hidden-btn');
-const hiddenMenu = document.getElementById('hidden-menu');
-const tiles = new Map();
-let printers = [];
-let hiddenIds = new Set();
-try { hiddenIds = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch (e) { /* no storage */ }
-
-function saveHidden() {
-  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hiddenIds])); } catch (e) { /* no storage */ }
-}
-
-function hidePrinter(id, hide) {
-  if (hide) hiddenIds.add(id); else hiddenIds.delete(id);
-  saveHidden();
-  render();
-}
-
-function render() {
-  for (const p of printers) {
-    const tile = tiles.get(p.id);
-    if (!hiddenIds.has(p.id) && !tile) tiles.set(p.id, buildTile(p));
-    if (hiddenIds.has(p.id) && tile) { tile.stop(); tiles.delete(p.id); }
-  }
-  const visible = printers.filter(p => tiles.has(p.id)).map(p => tiles.get(p.id));
-  grid.replaceChildren(...visible);
-  if (!visible.length) {
-    notice('All cameras are hidden. Open Hidden to show them again.');
-  }
-  renderHiddenMenu();
-}
-
-function renderHiddenMenu() {
-  const hiddenList = printers.filter(p => hiddenIds.has(p.id));
-  hiddenBtn.classList.toggle('hidden', !hiddenList.length);
-  hiddenBtn.textContent = `Hidden (${hiddenList.length})`;
-  const items = hiddenList.map(p => {
-    const b = document.createElement('button');
-    b.textContent = `Show ${p.name}`;
-    b.addEventListener('click', () => hidePrinter(p.id, false));
-    return b;
-  });
-  if (hiddenList.length > 1) {
-    const all = document.createElement('button');
-    all.className = 'primary';
-    all.textContent = 'Show all';
-    all.addEventListener('click', () => { hiddenIds.clear(); saveHidden(); render(); });
-    items.push(all);
-  }
-  hiddenMenu.replaceChildren(...items);
-  if (!hiddenList.length) toggleMenu(false);
-}
-
-function toggleMenu(open) {
-  // Open towards the middle of the screen so the menu never runs off an edge.
-  const onRight = hiddenBtn.getBoundingClientRect().left > window.innerWidth / 2;
-  hiddenMenu.style.left = onRight ? 'auto' : '0';
-  hiddenMenu.style.right = onRight ? '0' : 'auto';
-  hiddenMenu.classList.toggle('hidden', !open);
-  hiddenBtn.setAttribute('aria-expanded', String(open));
-}
-hiddenBtn.addEventListener('click', e => { e.stopPropagation(); toggleMenu(hiddenMenu.classList.contains('hidden')); });
-document.addEventListener('click', e => { if (!hiddenMenu.contains(e.target)) toggleMenu(false); });
-
+// ---------------------------------------------------------------- start
 async function pollCloudPrinters() {
   try {
     const response = await fetch('/api/printers');
     const list = await response.json().catch(() => null);
     if (!response.ok || !Array.isArray(list)) throw new Error(list?.error || 'Reload and sign in to view your printers.');
-    if (JSON.stringify(list) !== JSON.stringify(printers) || !grid.querySelector('.tile')) {
+    if (JSON.stringify(list) !== JSON.stringify(printers)) {
       for (const tile of tiles.values()) tile.stop();
       tiles.clear();
       printers = list;
-      if (printers.length) render();
-      else notice('Add a printer in Setup on the printer PC.');
+      render();
     }
   } catch (e) {
     for (const tile of tiles.values()) tile.stop();
     tiles.clear();
     printers = [];
-    notice(e.message);
+    render();
+    notice(grid, e.message);
   }
   setTimeout(pollCloudPrinters, 8000);
 }
 
+function showUser() {
+  const who = monitorOnly ? (info.user || 'Cloud') : info.admin ? 'This PC (admin)' : (info.user || '');
+  $('who').textContent = who;
+  $('who').classList.toggle('hidden', !who);
+  document.querySelectorAll('.admin-only').forEach(a => a.classList.toggle('hidden', !info.admin));
+}
+
 async function start() {
+  route();
   try {
     const me = await fetch('/api/me');
-    const info = await me.json();
-    if (!me.ok) { notice(info.error || 'Access denied'); return; }
+    info = await me.json();
+    if (!me.ok) { notice(grid, info.error || 'Access denied'); return; }
     monitorOnly = !!info.monitor_only;
+    showUser();
     if (monitorOnly) {
       pushKey = info.push_key;
       updateAlertsButton();
@@ -434,22 +640,18 @@ async function start() {
           updateAlertsButton();
         }).catch(() => {});
       }
-      pollCloudPrinters();
+      await pollCloudPrinters();
+      pollStatuses();
       return;
     }
     maxUploadMb = info.max_upload_mb || maxUploadMb;
-    document.getElementById('setup-link').classList.toggle('hidden', !info.admin);
-    const list = await (await fetch('/api/printers')).json();
-    if (!list.length) {
-      notice(info.admin ? 'No printers yet.' : 'Add printers from Setup on the printer PC.', info.admin);
-      return;
-    }
-    printers = list;
+    printers = await (await fetch('/api/printers')).json();
     render();
     updateAlertsButton();
+    pollStatuses();
     pollEvents();
   } catch (e) {
-    notice('Cannot reach the dashboard server.');
+    notice(grid, 'Cannot reach the dashboard server.');
   }
 }
 start();
