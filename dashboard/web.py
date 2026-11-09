@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
 from . import __version__, bambu, cameras, cloud, config, discover, klipper, monitor, notify, tailscale, tsinstall
-from .forward import Forwarder
+from .forward import Forwarder, local_or_tailnet
 from .tlspin import CertificateChanged, PinStore
 
 log = logging.getLogger("dashboard")
@@ -439,6 +439,8 @@ class Handler(BaseHTTPRequestHandler):
             # Admin port is never published; also reject DNS-rebinding hosts.
             host = (self.headers.get("Host") or "").lower().rsplit(":", 1)[0]
             return "local-admin" if host in LOCAL_HOSTNAMES else None
+        if not local_or_tailnet(self.headers.get("Host")):
+            return None  # DNS rebinding: another website pointed its name at this PC
         login = (self.headers.get("Tailscale-User-Login") or "").strip().lower()
         cfg = self.app.cfg
         if not login:

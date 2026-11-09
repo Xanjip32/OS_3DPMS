@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Security: the dashboard and Mainsail forwards refuse requests for other website names, so a
+  malicious page cannot use a browser on the printer PC to upload or start prints (DNS rebinding)
+- Security: printer redirects are followed only on the same printer (the API key never leaves it),
+  and a Bambu upload's file connection must present the pinned printer certificate
 - `tools/secure_printers.py` requires a Mainsail login on Klipper printers (Wi-Fi, dashboard and
   Tailscale alike) and gives OS_3DPMS each printer's API key so it keeps working; `--undo` reverts
 - Cloud: the printer PC names itself when it connects, so Cloudflare no longer blocks it as a

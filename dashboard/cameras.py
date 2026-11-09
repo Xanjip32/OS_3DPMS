@@ -5,9 +5,8 @@ import struct
 import threading
 import time
 import urllib.error
-import urllib.request
 
-from . import tlspin
+from . import klipper, tlspin
 
 log = logging.getLogger("dashboard.camera")
 
@@ -125,7 +124,7 @@ def read_mjpeg(stream, hub):
 def _open(url):
     """urlopen that closes error responses (they hold a socket) and explains them."""
     try:
-        return urllib.request.urlopen(url, timeout=10)
+        return klipper.opener.open(url, timeout=10)
     except urllib.error.HTTPError as e:
         e.close()
         if e.code >= 500:

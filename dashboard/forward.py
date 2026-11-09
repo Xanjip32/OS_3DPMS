@@ -6,10 +6,24 @@ from this PC.
 """
 import logging
 import os
+import re
 import socket
 import threading
 
 log = logging.getLogger("dashboard.forward")
+FORBIDDEN = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+
+
+def local_or_tailnet(host_header):
+    """True for a Host header a browser sends to this PC itself or to its Tailscale name.
+
+    Anything else is a website that pointed its own name at this PC (DNS rebinding) to use
+    the dashboard or Mainsail from a browser here.
+    """
+    host = (host_header or "").strip().lower()
+    if host.count(":") == 1:
+        host = host.split(":")[0]
+    return host in ("127.0.0.1", "localhost") or host.endswith(".ts.net")
 
 
 class Forwarder:
@@ -58,11 +72,29 @@ class Forwarder:
 
     def _pipe(self, client):
         try:
+            # A browser connection belongs to one site: checking the first request's Host is enough.
+            head = b""
+            upstream = None
             try:
+                client.settimeout(10)
+                while b"\r\n\r\n" not in head and len(head) < 16384:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        break
+                    head += chunk
+                host = re.search(rb"\r\nhost:[ \t]*([^\r\n]*)", head, re.I)
+                if not host or not local_or_tailnet(host.group(1).decode("latin-1")):
+                    client.sendall(FORBIDDEN)
+                    client.close()
+                    return
+                client.settimeout(None)
                 upstream = socket.create_connection((self.host, self.port), timeout=5)
                 upstream.settimeout(None)
+                upstream.sendall(head)
             except OSError:
-                client.close()
+                for s in (client, upstream):
+                    if s is not None:
+                        s.close()
                 return
 
             def pump(src, dst):

@@ -18,6 +18,19 @@ _webcam_lock = threading.Lock()
 BUSY_STATES = ("printing", "paused")
 
 
+class _SameDeviceRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow a printer's redirects only on that same device, so a printer (or whoever edits its
+    camera settings) cannot send the dashboard, or its API key, to another computer."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).hostname != urllib.parse.urlsplit(req.full_url).hostname:
+            return None  # refused: urllib raises HTTPError with the redirect status
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+opener = urllib.request.build_opener(_SameDeviceRedirect)
+
+
 def base_url(p):
     port = p.get("http_port", 80)
     return "http://%s/" % p["host"] if port == 80 else "http://%s:%d/" % (p["host"], port)
@@ -28,7 +41,7 @@ def http_json(p, path, timeout=5):
     key = config.secret(p, "api_key")
     if key:
         req.add_header("X-Api-Key", key)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with opener.open(req, timeout=timeout) as r:
         return json.loads(r.read(1_000_000).decode("utf-8"))
 
 

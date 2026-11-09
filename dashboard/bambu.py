@@ -44,6 +44,11 @@ class BambuFTPS(ftplib.FTP_TLS):
         if self._prot_p:
             conn = self.context.wrap_socket(conn, server_hostname=self.host,
                                             session=self.sock.session)
+            try:  # the file goes over this connection: it must be the same printer as the login
+                self.pins.check(conn, self.host, self.port)
+            except Exception:
+                conn.close()
+                raise
         return conn, size
 
     def store(self, name, f):
