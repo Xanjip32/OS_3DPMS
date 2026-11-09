@@ -8,6 +8,7 @@ import urllib.request
 import uuid
 
 from . import config
+from .notify import USER_AGENT
 
 log = logging.getLogger("dashboard.cloud")
 FRAME_LIMIT = 1_000_000
@@ -33,7 +34,8 @@ class Connector:
 
     def request(self, link, key, body, camera=None):
         url = link + "/connector"
-        headers = {"Authorization": "Bearer " + key}
+        # Cloudflare blocks Python's default User-Agent (error 1010).
+        headers = {"Authorization": "Bearer " + key, "User-Agent": USER_AGENT}
         if camera is None:
             headers["Content-Type"] = "application/json"
             method = "POST"
@@ -96,7 +98,8 @@ class Connector:
                     delay = self.sync(settings)
                 except Exception as error:
                     self.detail = "Check the dashboard address and connection key."
-                    log.warning("Cloud relay connection failed: %s", type(error).__name__)
+                    log.warning("Cloud relay connection failed: %s %s", type(error).__name__,
+                                getattr(error, "code", ""))
             time.sleep(delay if link else 2)
 
     def status(self):

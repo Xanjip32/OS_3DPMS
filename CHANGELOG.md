@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Cloud: the printer PC names itself when it connects, so Cloudflare no longer blocks it as a
+  bot (403, error 1010) and the cloud dashboard shows the printers
 - Setup: **Find printers on my network** finds Klipper and Bambu Lab printers and adds them in
   one click, with their name, camera rotation and the Bambu serial number
 - Bambu: a missing serial number is filled in from the printer's network announcement, which

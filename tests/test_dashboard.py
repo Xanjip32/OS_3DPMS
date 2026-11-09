@@ -346,6 +346,15 @@ class UnitTests(unittest.TestCase):
         self.assertNotIn("hello", token)
         self.assertEqual(winsecret.unprotect(token), "hello")
 
+    def test_cloud_requests_name_the_app(self):
+        # Cloudflare answers 403 (error 1010) to Python's default User-Agent.
+        connector = cloud.Connector.__new__(cloud.Connector)
+        connector.opener = mock.MagicMock()
+        connector.opener.open.return_value.__enter__.return_value.read.return_value = b"{}"
+        connector.request("https://printers.account.workers.dev", "k" * 43, b"{}")
+        sent = connector.opener.open.call_args.args[0]
+        self.assertTrue(sent.get_header("User-agent").startswith("OS_3DPMS/"))
+
     def test_certificate_pinning(self):
         class FakeSock:
             def __init__(self, der):
