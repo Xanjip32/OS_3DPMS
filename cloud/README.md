@@ -5,58 +5,66 @@ view printer status and recent camera snapshots, and the installed web app can
 receive background alerts. Printer settings, access codes, and printing stay
 on the printer host. The cloud dashboard is for monitoring.
 
-## One-time Cloudflare setup
+Only the owner's Google account can open it. The Worker signs you in with
+Google itself, so you do not need Cloudflare Zero Trust or a payment card.
+
+## One-time setup
 
 1. In this folder, run `npm ci`, `npx wrangler login`, and `npm run deploy`.
    Save the `https://…workers.dev` address Wrangler shows.
-2. Enable the **Zero Trust Free** plan in the Cloudflare dashboard if prompted.
-   Cloudflare may ask for billing details during free-plan onboarding.
-   In **Cloudflare Zero Trust → Access → Applications**, add a **Self-hosted**
-   application for that exact hostname. Add an **Allow** policy for your email
-   address. Enable an identity provider such as One-time PIN. Copy the
-   application's **Audience (AUD) tag**.
-3. Add a separate self-hosted application for the same hostname with the path
-   `/connector`. Give that path a **Bypass** policy. The Worker checks the
-   printer host's connection key on that route. Leave browser sign-in required
-   on the main application. Use a hostname-based application for this setup.
-4. Run `npm run keys` once. Run `npx wrangler secret put NAME` separately for each
+2. Create a Google sign-in client (free, no card):
+   1. In [Google Cloud Console](https://console.cloud.google.com), create a project.
+   2. **APIs & Services → OAuth consent screen**: choose **External**, fill in
+      the app name and your email. Leave it in **Testing** and add your Gmail
+      address as a **test user**.
+   3. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+      type **Web application**. Under **Authorized redirect URIs**, add
+      `https://<your-worker-address>/auth/callback`, for example
+      `https://os3dpms.you.workers.dev/auth/callback`.
+   4. Copy the **Client ID** and **Client secret**.
+3. Run `npm run keys` once. Run `npx wrangler secret put NAME` separately for each
    of the following, pasting the corresponding value into the terminal prompt:
 
    | Name | Value |
    | --- | --- |
-   | `OWNER_EMAIL` | The exact email address in your Allow policy |
-   | `ACCESS_AUD` | The main application’s Audience tag |
+   | `OWNER_EMAIL` | Your Gmail address. Only this account can sign in. |
+   | `GOOGLE_CLIENT_ID` | The client ID from step 2 |
+   | `GOOGLE_CLIENT_SECRET` | The client secret from step 2 |
    | `CONNECTOR_KEY` | The connection key from `npm run keys` |
    | `VAPID_PUBLIC_KEY` | The public push key from `npm run keys` |
    | `VAPID_PRIVATE_KEY` | The private push key from `npm run keys` |
 
+4. Open the Worker address, click **Sign in with Google**, and pick your
+   account. You stay signed in on that device for 30 days. **Settings → Sign
+   out** signs you out.
 5. On the printer PC, open **Setup → Cloud dashboard**, paste the Worker
    address and connection key, then click **Connect**. Keep the host running.
    Test the cloud dashboard from your phone over mobile data.
 
-Keep the connection key and private push key in a password manager. If you
-replace the push keys, subscribe again from each device. A change to the host
-key requires updating it in the host's Setup page.
+Keep the connection key, client secret, and private push key in a password
+manager, never in this folder. If you replace the push keys, subscribe again
+from each device. A change to the host key requires updating it in the host's
+Setup page. Replacing the Google client secret signs out every device.
 
-## Sign in with Gmail
+Turn on 2-Step Verification for the owner Google account: whoever controls it
+can see your printers.
 
-Cloudflare Access can use Google as the sign-in page, so you open the cloud dashboard with
-your Gmail account (free).
+### How sign-in is protected
 
-1. In Google Cloud Console, create a project, then **APIs & Services → OAuth consent screen**
-   (External, add your Gmail as a test user) and **Credentials → Create credentials → OAuth
-   client ID → Web application**.
-2. Under **Authorized redirect URIs**, add
-   `https://<your-team-name>.cloudflareaccess.com/cdn-cgi/access/callback`
-   (your team name is shown in Zero Trust → Settings → Custom pages / Team domain).
-3. In **Cloudflare Zero Trust → Settings → Authentication → Login methods → Add new → Google**,
-   paste the client ID and client secret, then click **Test**.
-4. Open the dashboard's Access application, enable **Google** under login methods (you can turn
-   off One-time PIN), and keep the **Allow** policy limited to your Gmail address.
-5. Set `OWNER_EMAIL` to the same Gmail address. The dashboard shows who is signed in on the
-   Settings page.
+- Google checks your password and 2-step code; the Worker never sees them.
+- The sign-in uses OpenID Connect with PKCE, a one-time `state`, and a `nonce`.
+  The Worker accepts only a verified email that matches `OWNER_EMAIL`.
+- The session is an HMAC-signed, `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
+  Page scripts cannot read it, and it cannot be forged without the client secret.
+- The printer host never uses Google. It connects to `/connector` with the
+  connection key.
 
-Turn on 2-Step Verification for that Google account: whoever controls it can see your printers.
+### Cloudflare Access (optional)
+
+If you already use Cloudflare Zero Trust, the Worker also accepts Access. Add a
+self-hosted application for the Worker hostname with an **Allow** policy for
+your email, a second application for the path `/connector` with a **Bypass**
+policy, and set the `ACCESS_AUD` secret to the main application's Audience tag.
 
 ## Phone alerts
 
@@ -71,6 +79,6 @@ notifications** on the printer PC.
 The dashboard refreshes camera snapshots while you're viewing them. Cloudflare's
 free quotas apply. The host needs to remain online and able to reach the printers.
 
-- [Cloudflare Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
+- [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect)
 - [Cloudflare Durable Objects free quotas](https://developers.cloudflare.com/durable-objects/platform/pricing/)
 - [Apple Home Screen web push](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)

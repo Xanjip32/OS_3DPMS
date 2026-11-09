@@ -18,13 +18,160 @@ async function connectorAuthorized(request, key) {
   return a.reduce((difference, byte, i) => difference | (byte ^ b[i]), 0) === 0;
 }
 
-// Returns the signed-in owner's email, or '' when the viewer is not the owner.
-async function viewerEmail(ctx, env) {
-  if (!env.ACCESS_AUD || ctx.access?.aud !== env.ACCESS_AUD || !env.OWNER_EMAIL) return '';
-  const identity = await ctx.access.getIdentity();
-  const email = identity?.email?.toLowerCase() || '';
-  return email && email === env.OWNER_EMAIL.toLowerCase() ? email : '';
+// ---------------------------------------------------------------- Google sign-in
+// The Worker signs the owner in with Google itself (OpenID Connect, code flow with PKCE),
+// then keeps them signed in with an HMAC-signed, HttpOnly cookie. No Cloudflare Access needed.
+const SESSION_COOKIE = '__Host-os3dpms_session';
+const LOGIN_COOKIE = '__Host-os3dpms_login';
+const SESSION_DAYS = 30;
+const GOOGLE_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
+const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
+
+const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64url = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+const randomText = (size = 32) => b64url(crypto.getRandomValues(new Uint8Array(size)));
+const encoder = new TextEncoder();
+const googleReady = env => !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.OWNER_EMAIL);
+
+// The cookie-signing key is derived from the Google client secret, so rotating that secret signs everyone out.
+async function signingKey(env) {
+  const material = await crypto.subtle.digest('SHA-256', encoder.encode('os3dpms-session-v1:' + env.GOOGLE_CLIENT_SECRET));
+  return crypto.subtle.importKey('raw', material, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
+
+async function seal(env, value) {
+  const body = b64url(encoder.encode(JSON.stringify(value)));
+  const mac = await crypto.subtle.sign('HMAC', await signingKey(env), encoder.encode(body));
+  return body + '.' + b64url(new Uint8Array(mac));
+}
+
+async function unseal(env, token) {
+  const [body, mac, extra] = (token || '').split('.');
+  if (!body || !mac || extra !== undefined || body.length > 2048) return null;
+  try {
+    const ok = await crypto.subtle.verify('HMAC', await signingKey(env), unb64url(mac), encoder.encode(body));
+    if (!ok) return null;
+    const value = JSON.parse(new TextDecoder().decode(unb64url(body)));
+    return value && typeof value.exp === 'number' && value.exp > Date.now() ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function readCookie(request, name) {
+  for (const part of (request.headers.get('Cookie') || '').split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === name) return rest.join('=');
+  }
+  return '';
+}
+
+const cookie = (name, value, maxAge) =>
+  `${name}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+
+const escapeHtml = text => String(text).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+
+function page(title, message, button, status = 200, extraHeaders = {}) {
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Printers</title>
+<link rel="icon" href="/icon-192.png"><link rel="stylesheet" href="/auth/style.css"></head>
+<body><main><img src="/icon-192.png" alt="" width="64" height="64"><h1>${escapeHtml(title)}</h1>
+<p>${escapeHtml(message)}</p>${button ? `<a class="btn" href="/auth/login">${escapeHtml(button)}</a>` : ''}
+</main></body></html>`;
+  return new Response(html, { status, headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8', ...extraHeaders } });
+}
+
+const LOGIN_CSS = `body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+background:#f6f8fa;color:#1f2328;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:24px;box-sizing:border-box}
+main{background:#fff;border:1px solid #d0d7de;border-radius:12px;padding:32px;max-width:380px;width:100%;text-align:center}
+h1{font-size:20px;margin:12px 0 8px}p{color:#59636e;margin:0 0 24px}
+.btn{display:inline-block;background:#1f6feb;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600}
+@media (prefers-color-scheme:dark){body{background:#0f1115;color:#e6e8ec}main{background:#161a21;border-color:#2b313b}p{color:#9aa4b2}}`;
+
+async function startLogin(request, env) {
+  const url = new URL(request.url);
+  const state = randomText(), nonce = randomText(), verifier = randomText(48);
+  const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(verifier))));
+  const target = new URL(GOOGLE_AUTH);
+  target.search = new URLSearchParams({
+    client_id: env.GOOGLE_CLIENT_ID,
+    redirect_uri: url.origin + '/auth/callback',
+    response_type: 'code',
+    scope: 'openid email',
+    state, nonce,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    login_hint: env.OWNER_EMAIL,
+    prompt: 'select_account',
+  });
+  const login = await seal(env, { state, nonce, verifier, exp: Date.now() + 10 * 60_000 });
+  return new Response(null, { status: 302, headers: { ...headers, Location: target.href, 'Set-Cookie': cookie(LOGIN_COOKIE, login, 600) } });
+}
+
+async function finishLogin(request, env) {
+  const url = new URL(request.url);
+  const clearLogin = { 'Set-Cookie': cookie(LOGIN_COOKIE, '', 0) };
+  const fail = message => page('Sign-in failed', message, 'Try again', 403, clearLogin);
+  const login = await unseal(env, readCookie(request, LOGIN_COOKIE));
+  const code = url.searchParams.get('code');
+  if (!login || !code || url.searchParams.get('state') !== login.state) {
+    return fail('The sign-in link expired or was opened in a different browser.');
+  }
+  let claims;
+  try {
+    // The ID token comes straight from Google's token endpoint over TLS, authenticated with our client
+    // secret, so its claims can be trusted without checking the JWT signature (OpenID Connect Core 3.1.3.7).
+    const response = await fetch(GOOGLE_TOKEN, {
+      method: 'POST',
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: env.GOOGLE_CLIENT_ID,
+        client_secret: env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: url.origin + '/auth/callback',
+        grant_type: 'authorization_code',
+        code_verifier: login.verifier,
+      }),
+    });
+    const tokens = await response.json();
+    claims = JSON.parse(new TextDecoder().decode(unb64url(String(tokens.id_token).split('.')[1])));
+  } catch {
+    return fail('Google did not confirm the sign-in. Try again.');
+  }
+  const email = String(claims.email || '').toLowerCase();
+  const valid = GOOGLE_ISSUERS.includes(claims.iss) && claims.aud === env.GOOGLE_CLIENT_ID
+    && claims.nonce === login.nonce && claims.exp * 1000 > Date.now() && claims.email_verified === true;
+  if (!valid) return fail('Google did not confirm the sign-in. Try again.');
+  if (email !== env.OWNER_EMAIL.toLowerCase()) {
+    return fail('This Google account is not allowed on this dashboard. Sign in with the owner account.');
+  }
+  const session = await seal(env, { email, exp: Date.now() + SESSION_DAYS * 86_400_000 });
+  const out = new Headers({ ...headers, Location: '/' });
+  out.append('Set-Cookie', cookie(SESSION_COOKIE, session, SESSION_DAYS * 86_400));
+  out.append('Set-Cookie', clearLogin['Set-Cookie']);
+  return new Response(null, { status: 302, headers: out });
+}
+
+// Returns the signed-in owner's email, or '' when the viewer is not the owner.
+// Google sign-in is used when it is configured; Cloudflare Access still works as an alternative.
+async function viewerEmail(request, ctx, env) {
+  if (!env.OWNER_EMAIL) return '';
+  const owner = env.OWNER_EMAIL.toLowerCase();
+  if (googleReady(env)) {
+    const session = await unseal(env, readCookie(request, SESSION_COOKIE));
+    if (session?.email === owner) return owner;
+  }
+  if (env.ACCESS_AUD && ctx.access?.aud === env.ACCESS_AUD) {
+    const identity = await ctx.access.getIdentity();
+    if (identity?.email?.toLowerCase() === owner) return owner;
+  }
+  return '';
+}
+
+// Files the sign-in page needs before the viewer is signed in. None of them reveal printer data.
+const PUBLIC_ASSETS = new Set(['/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/manifest.webmanifest']);
 
 export default {
   async fetch(request, env, ctx) {
@@ -35,15 +182,31 @@ export default {
       if (!await connectorAuthorized(request, env.CONNECTOR_KEY)) return json({ error: 'Invalid connection key.' }, 403);
       return env.RELAY.getByName('host').fetch(request);
     }
-    const viewer = await viewerEmail(ctx, env);
-    if (!viewer) return json({ error: 'Sign in with the dashboard owner account.' }, 403);
-    if (method === 'GET' && Object.hasOwn(assets, path)) {
-      const asset = assets[path];
-      return new Response(Uint8Array.from(atob(asset.base64), c => c.charCodeAt(0)),
-        { headers: { ...headers, 'Content-Type': asset.type } });
+    const asset = method === 'GET' && Object.hasOwn(assets, path) ? assets[path] : null;
+    const sendAsset = () => new Response(Uint8Array.from(atob(asset.base64), c => c.charCodeAt(0)),
+      { headers: { ...headers, 'Content-Type': asset.type } });
+    if (method === 'GET' && path.startsWith('/auth/')) {
+      if (path === '/auth/style.css') return new Response(LOGIN_CSS, { headers: { ...headers, 'Content-Type': 'text/css' } });
+      if (!googleReady(env)) return page('Sign-in is not set up', 'Add the Google client ID and secret to the Worker.', '', 503);
+      if (path === '/auth/login') return startLogin(request, env);
+      if (path === '/auth/callback') return finishLogin(request, env);
+      if (path === '/auth/logout') {
+        return page('Signed out', 'You are signed out of the printer dashboard on this device.', 'Sign in again', 200,
+          { 'Set-Cookie': cookie(SESSION_COOKIE, '', 0) });
+      }
     }
+    if (asset && PUBLIC_ASSETS.has(path)) return sendAsset();
+    const viewer = await viewerEmail(request, ctx, env);
+    if (!viewer) {
+      if (method === 'GET' && path === '/' && googleReady(env)) {
+        return page('OS_3DPMS Printers', 'Sign in with the owner Google account to see your printers.', 'Sign in with Google');
+      }
+      return json({ error: 'Sign in with the dashboard owner account.' }, 403);
+    }
+    if (asset) return sendAsset();
     if (method === 'GET' && path === '/api/me') {
-      return json({ monitor_only: true, user: viewer, push_key: env.VAPID_PUBLIC_KEY || '' });
+      return json({ monitor_only: true, user: viewer, push_key: env.VAPID_PUBLIC_KEY || '',
+        logout: googleReady(env) ? '/auth/logout' : '' });
     }
     if (method === 'GET' && (path === '/api/printers' || /^\/(snap|api\/status)\/[a-z0-9-]+$/.test(path))) {
       return env.RELAY.getByName('host').fetch(request);

@@ -455,6 +455,7 @@ function renderSettings() {
     ? `Signed in as ${info.user || 'the dashboard owner'}. This is the cloud dashboard: it shows cameras and status from anywhere.`
     : info.admin ? 'You are on the printer PC itself.'
       : `Signed in through Tailscale as ${info.user || 'a tailnet user'}.`;
+  $('sign-out').classList.toggle('hidden', !(monitorOnly && info.logout === '/auth/logout'));
   $('setup-text').textContent = info.admin
     ? 'Add or edit printers, phone notifications and the cloud dashboard.'
     : 'Printers, notifications and the cloud connection are set up on the printer PC (Setup page).';

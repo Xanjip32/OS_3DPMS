@@ -52,6 +52,57 @@ test('private viewer can request a photo, but only the paired host can publish o
   assert.deepEqual(await (await fetch('/api/status/voron')).json(), { state: 'printing' });
 });
 
+test('owner signs in with Google; other accounts and forged cookies are refused', async t => {
+  const google = { GOOGLE_CLIENT_ID: 'client.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'secret', ACCESS_AUD: '' };
+  const { fetch } = fixture(google);
+  const page = await fetch('/', {}, {});
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /Sign in with Google/);
+  assert.equal((await fetch('/api/printers', {}, {})).status, 403);
+  assert.equal((await fetch('/icon-192.png', {}, {})).status, 200);
+
+  const signIn = async email => {
+    const start = await fetch('/auth/login', {}, {});
+    assert.equal(start.status, 302);
+    const target = new URL(start.headers.get('Location'));
+    assert.equal(target.origin, 'https://accounts.google.com');
+    assert.equal(target.searchParams.get('code_challenge_method'), 'S256');
+    const login = start.headers.get('Set-Cookie').split(';')[0];
+    const claims = { iss: 'https://accounts.google.com', aud: google.GOOGLE_CLIENT_ID, email, email_verified: true,
+      nonce: target.searchParams.get('nonce'), exp: Date.now() / 1000 + 300 };
+    const token = 'x.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.x';
+    const mock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+      assert.equal(url, 'https://oauth2.googleapis.com/token');
+      assert.ok(new URLSearchParams(options.body).get('code_verifier'));
+      return Response.json({ id_token: token });
+    });
+    const state = target.searchParams.get('state');
+    const wrongState = await fetch('/auth/callback?code=c&state=bad', { headers: { Cookie: login } }, {});
+    assert.equal(wrongState.status, 403);
+    const done = await fetch(`/auth/callback?code=c&state=${state}`, { headers: { Cookie: login } }, {});
+    mock.mock.restore();
+    return done;
+  };
+
+  const stranger = await signIn('other@example.com');
+  assert.equal(stranger.status, 403);
+  assert.doesNotMatch(stranger.headers.get('Set-Cookie'), /session=[^;]/);
+
+  const ok = await signIn(owner);
+  assert.equal(ok.status, 302);
+  const session = ok.headers.getSetCookie().find(c => c.includes('session=')).split(';')[0];
+  const me = await fetch('/api/me', { headers: { Cookie: session } }, {});
+  assert.equal((await me.json()).user, owner);
+
+  const [name, value] = session.split('=');
+  const forged = name + '=' + value.slice(0, -2) + (value.endsWith('AA') ? 'BB' : 'AA');
+  assert.equal((await fetch('/api/me', { headers: { Cookie: forged } }, {})).status, 403);
+  const fake = Buffer.from(JSON.stringify({ email: owner, exp: Date.now() + 1e9 })).toString('base64url');
+  assert.equal((await fetch('/api/me', { headers: { Cookie: `${name}=${fake}.AAAA` } }, {})).status, 403);
+  const out = await fetch('/auth/logout', {}, {});
+  assert.match(out.headers.get('Set-Cookie'), /Max-Age=0/);
+});
+
 function pushKeys() {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const { x, y, d } = privateKey.export({ format: 'jwk' });
