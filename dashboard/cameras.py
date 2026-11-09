@@ -1,5 +1,6 @@
 """Camera readers. One upstream connection per printer, shared by all viewers."""
 import logging
+import socket
 import struct
 import threading
 import time
@@ -127,8 +128,22 @@ def bambu_camera(hub, host, access_code, pins):
         auth += b"bblp".ljust(32, b"\0")
         auth += access_code.encode().ljust(32, b"\0")
         s.sendall(auth)
+        first = True
         while hub.active():
-            header = _recv_exact(s, 16)
+            try:
+                header = _recv_exact(s, 16)
+            except socket.timeout:
+                if not first:
+                    raise
+                raise ConnectionError("printer accepted the camera connection but sent no picture. "
+                                      "Check the LAN access code and turn on LAN Mode Liveview "
+                                      "on the printer") from None
+            except ConnectionError:
+                if not first:
+                    raise
+                raise ConnectionError("printer closed the camera connection before the first picture. "
+                                      "Usually a wrong LAN access code") from None
+            first = False
             size = struct.unpack("<I", header[:4])[0]
             if size <= 0 or size > MAX_FRAME_BYTES:
                 raise ConnectionError("bad frame size %d (check access code)" % size)

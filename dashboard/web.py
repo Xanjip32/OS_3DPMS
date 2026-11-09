@@ -515,6 +515,11 @@ class Handler(BaseHTTPRequestHandler):
             camera = "No camera frame. Check the LAN access code and whether this model provides a JPEG feed on port 6000."
         else:
             camera = "No camera frame. Check that the MJPEG or JPEG snapshot URL opens from this PC."
+        if not camera_ok:
+            with hub.cond:
+                reason = hub.error
+            if reason:  # the camera reader's own error says what went wrong
+                camera += " Details: %s" % str(reason)[:200]
         return self.send_json(200, {"printer_ok": printer_ok, "printer": printer,
                                     "camera_ok": camera_ok, "camera": camera})
 
