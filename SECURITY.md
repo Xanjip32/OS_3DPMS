@@ -45,8 +45,9 @@ a user's browser, and the printers' network traffic.
 
 - Mainsail pages are published as-is to your tailnet. Anyone who may open the dashboard
   through Tailscale may also open Mainsail. Restrict users with Tailscale ACLs if needed.
-- Moonraker sees all requests as coming from the dashboard PC, so it trusts them.
-  Moonraker's own login (`[authorization]` with users) still works if you enable it.
+- By default Moonraker trusts every private network address, so anyone on the LAN (and anyone
+  who may open Mainsail through the dashboard) controls the printer. `tools/secure_printers.py`
+  trusts only the printer itself and requires a Mainsail login; OS_3DPMS then uses the API key.
 - G-code is not inspected. A user who may upload can send any G-code.
 - Bambu printers are not status-checked before starting a print; the printer itself refuses a
   new job while busy.

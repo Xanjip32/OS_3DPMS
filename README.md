@@ -85,6 +85,11 @@ provides an HTTP MJPEG stream or a JPEG snapshot works here. Set **Camera URL ov
 in setup to use a different HTTP MJPEG or JPEG snapshot URL. If uploads fail with 401, add the printer PC to
 `trusted_clients` in `moonraker.conf`, or enter a Moonraker API key on the setup page.
 
+Out of the box, Moonraker lets any device on your network control the printer without a login.
+Run `python tools\secure_printers.py` on the printer PC (printers idle) to require a Mainsail
+login everywhere: it saves each printer's API key in OS_3DPMS, creates your login, and trusts
+only the printer itself (KlipperScreen keeps working). `--undo` puts the old settings back.
+
 **Bambu Lab.** You need the LAN access code (printer screen: Settings → WLAN / Network). The
 code changes when LAN mode is switched off and on, so read it again if the camera stops
 working. Uploads go to the SD card, so a card must be inserted. The serial number turns on

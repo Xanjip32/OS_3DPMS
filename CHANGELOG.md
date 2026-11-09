@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `tools/secure_printers.py` requires a Mainsail login on Klipper printers (Wi-Fi, dashboard and
+  Tailscale alike) and gives OS_3DPMS each printer's API key so it keeps working; `--undo` reverts
 - Cloud: the printer PC names itself when it connects, so Cloudflare no longer blocks it as a
   bot (403, error 1010) and the cloud dashboard shows the printers
 - Setup: **Find printers on my network** finds Klipper and Bambu Lab printers and adds them in
