@@ -173,8 +173,20 @@ async function viewerEmail(request, ctx, env) {
 // Files the sign-in page needs before the viewer is signed in. None of them reveal printer data.
 const PUBLIC_ASSETS = new Set(['/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/manifest.webmanifest']);
 
+// Secrets pasted from some terminals carry a byte-order mark or a trailing newline; drop them.
+const SECRET_NAMES = ['OWNER_EMAIL', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'ACCESS_AUD', 'CONNECTOR_KEY',
+  'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'];
+function cleanEnv(env) {
+  const clean = Object.create(env);
+  for (const name of SECRET_NAMES) {
+    if (typeof env[name] === 'string') clean[name] = env[name].replace(/^﻿/, '').trim();
+  }
+  return clean;
+}
+
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, rawEnv, ctx) {
+    const env = cleanEnv(rawEnv);
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -237,7 +249,7 @@ function pushSubscription(value) {
 export class PrinterRelay {
   constructor(ctx, env) {
     this.ctx = ctx;
-    this.env = env;
+    this.env = cleanEnv(env);
     this.printers = new Map();
     this.photos = new Map();
     this.demand = new Map();

@@ -53,7 +53,9 @@ test('private viewer can request a photo, but only the paired host can publish o
 });
 
 test('owner signs in with Google; other accounts and forged cookies are refused', async t => {
-  const google = { GOOGLE_CLIENT_ID: 'client.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'secret', ACCESS_AUD: '' };
+  // A byte-order mark and newline, as some terminals add when piping a secret, must not matter.
+  const google = { GOOGLE_CLIENT_ID: 'client.apps.googleusercontent.com\n', GOOGLE_CLIENT_SECRET: 'secret',
+    ACCESS_AUD: '', OWNER_EMAIL: '﻿' + owner };
   const { fetch } = fixture(google);
   const page = await fetch('/', {}, {});
   assert.equal(page.status, 200);
@@ -68,7 +70,7 @@ test('owner signs in with Google; other accounts and forged cookies are refused'
     assert.equal(target.origin, 'https://accounts.google.com');
     assert.equal(target.searchParams.get('code_challenge_method'), 'S256');
     const login = start.headers.get('Set-Cookie').split(';')[0];
-    const claims = { iss: 'https://accounts.google.com', aud: google.GOOGLE_CLIENT_ID, email, email_verified: true,
+    const claims = { iss: 'https://accounts.google.com', aud: google.GOOGLE_CLIENT_ID.trim(), email, email_verified: true,
       nonce: target.searchParams.get('nonce'), exp: Date.now() / 1000 + 300 };
     const token = 'x.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.x';
     const mock = t.mock.method(globalThis, 'fetch', async (url, options) => {
