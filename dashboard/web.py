@@ -520,6 +520,11 @@ class Handler(BaseHTTPRequestHandler):
                 reason = hub.error
             if reason:  # the camera reader's own error says what went wrong
                 camera += " Details: %s" % str(reason)[:200]
+            if p["type"] == "bambu" and not p.get("webcam_url"):
+                code = config.secret(p, "access_code")
+                if code != code.strip() or any(c.isupper() for c in code):
+                    camera += (" The saved access code has capital letters or spaces. Codes are"
+                               " case-sensitive: type it exactly as the printer screen shows it.")
         return self.send_json(200, {"printer_ok": printer_ok, "printer": printer,
                                     "camera_ok": camera_ok, "camera": camera})
 

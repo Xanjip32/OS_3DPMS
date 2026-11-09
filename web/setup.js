@@ -296,8 +296,11 @@ function renderPrinters(checkIds = new Set()) {
         type: 'password', autocomplete: 'off', placeholder: p.has_api_key ? 'saved (leave empty to keep)' : 'only if Moonraker needs it',
       }))));
     } else {
+      // Shown as plain text: the code is on the printer screen anyway, and a hidden field hides
+      // typing mistakes such as Caps Lock (access codes are case-sensitive).
       fields.append(field('LAN access code', bind('access_code', el('input', {
-        type: 'password', autocomplete: 'off', placeholder: p.has_access_code ? 'saved (leave empty to keep)' : 'from printer screen',
+        type: 'text', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', class: 'code',
+        placeholder: p.has_access_code ? 'saved (leave empty to keep)' : 'from printer screen, e.g. 1a2b3c4d',
       }))));
       advanced.append(field('Serial number (for remote start)', bind('serial', el('input', { placeholder: 'Optional' }))));
       advanced.append(el('label', { class: 'check' }, bind('use_ams', el('input', { type: 'checkbox' }), 'bool'), 'Print from AMS'));
