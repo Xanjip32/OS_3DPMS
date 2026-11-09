@@ -378,10 +378,48 @@ function addPrinter(type) {
   if (type === 'klipper') p.ui_port = nextUiPort();
   printers.push(p);
   renderPrinters();
-  $('printer-list').lastElementChild.querySelector('input').focus();
+  const row = $('printer-list').lastElementChild;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.querySelector('input').focus({ preventScroll: true });
+  $('save-msg').className = 'msg';
+  $('save-msg').textContent = 'Fill in the new printer, then click Save printers.';
 }
 $('add-klipper').addEventListener('click', () => addPrinter('klipper'));
 $('add-bambu').addEventListener('click', () => addPrinter('bambu'));
+
+// Printers found in the old printer-dashboard prototype: offer to copy them in one click.
+function renderLegacy(legacy) {
+  let box = $('legacy-import');
+  if (!legacy || !legacy.length) { if (box) box.remove(); return; }
+  if (!box) {
+    box = el('div', { id: 'legacy-import', class: 'legacy-import' });
+    $('printer-list').before(box);
+  }
+  const msg = el('span', { class: 'msg', role: 'status' });
+  const btn = el('button', { class: 'primary', text: `Import ${legacy.length} printers`, onclick: async () => {
+    btn.disabled = true;
+    msg.className = 'msg';
+    msg.textContent = 'Importing…';
+    try {
+      const r = await api('/api/setup/import-old', {});
+      await loadConfig();
+      renderPrinters(new Set(printers.map(p => p.id)));
+      $('save-msg').className = 'msg ok';
+      $('save-msg').textContent = `Imported ${r.imported} printers. Checking each printer and camera below…`;
+      $('printer-list').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    } catch (e) {
+      msg.className = 'msg bad';
+      msg.textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  } });
+  box.replaceChildren(
+    el('strong', { text: 'Printers from the old dashboard' }),
+    el('p', { text: `Found ${legacy.map(p => p.name).join(', ')} in the old printer-dashboard. ` +
+      'Import them with the settings that worked there, including the Bambu access code.' }),
+    el('div', { class: 'actions' }, btn, msg));
+}
 
 const saveBtn = $('save');
 saveBtn.addEventListener('click', async () => {
@@ -523,6 +561,7 @@ async function loadConfig() {
   $('cloud-url').value = cloudUrl;
   $('cloud-key').placeholder = cfg.cloud.has_key ? 'Saved' : '';
   renderPrinters();
+  renderLegacy(cfg.legacy);
   renderNotifications(cfg.notifications, cfg.channels);
 }
 

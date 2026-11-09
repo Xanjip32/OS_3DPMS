@@ -15,3 +15,11 @@ if (Test-Path $pidFile) {
 Get-CimInstance Win32_Process -Filter "Name like 'py%.exe'" |
     Where-Object { $_.CommandLine -like '*printer-dashboard*server.py*' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force; 'Stopped old printer-dashboard.' }
+
+# Keep the old prototype from starting again at login. Renamed, not deleted, so it can be undone.
+$startup = [Environment]::GetFolderPath('Startup')
+$oldStart = Join-Path $startup 'printer-dashboard.vbs'
+if (Test-Path $oldStart) {
+    Move-Item -Force $oldStart ($oldStart + '.disabled')
+    'Turned off auto-start of the old printer-dashboard (renamed to printer-dashboard.vbs.disabled).'
+}

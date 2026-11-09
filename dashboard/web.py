@@ -54,6 +54,30 @@ EDITABLE_FIELDS = ("id", "name", "type", "host", "ui_port", "http_port", "webcam
                    "flip_horizontal", "flip_vertical", "serial", "use_ams")
 
 
+IMPORT_FIELDS = EDITABLE_FIELDS + ("access_code", "api_key")
+# Where the older "printer-dashboard" prototype keeps its settings.
+LEGACY_CONFIGS = (
+    os.path.join(os.path.dirname(ROOT), "printer-dashboard", "config.json"),
+    os.path.join(os.path.expanduser("~"), "Desktop", "printer-dashboard", "config.json"),
+)
+
+
+def legacy_printers():
+    """(path, printers) from the old printer-dashboard config, or (None, []) when there is none."""
+    for path in LEGACY_CONFIGS:
+        if not os.path.isfile(path):
+            continue
+        try:
+            raw = config.read_raw(path)
+        except (OSError, config.ConfigError):
+            continue
+        printers = [p for p in raw.get("printers") or [] if isinstance(p, dict)
+                    and p.get("type") in ("klipper", "bambu") and isinstance(p.get("host"), str) and p["host"]]
+        if printers:
+            return path, printers[:32]
+    return None, []
+
+
 def safe_filename(name):
     name = os.path.basename((name or "").replace("\\", "/")).strip()
     name = re.sub(r"[^\w.\-() ]+", "_", name).lstrip(". ")
@@ -130,7 +154,7 @@ class App:
     def _camera_source(self, p):
         if p["type"] == "bambu" and not p.get("webcam_url"):
             return lambda hub: cameras.bambu_camera(hub, p["host"], config.secret(p, "access_code"), self.pins)
-        return lambda hub: cameras.klipper_camera(hub, klipper.webcam_url(p))
+        return lambda hub: cameras.klipper_camera(hub, lambda: klipper.webcam_urls(p))
 
     def publish_mappings(self):
         maps = [(443, self.cfg["port"])]
@@ -159,9 +183,68 @@ class App:
         for field in config.NOTIFY_SECRETS:
             notifications["has_" + field] = bool(n.get(field) or n.get(field + "_protected"))
         remote = self.cfg["cloud"]
+        _, old = legacy_printers()
         return {"allowed_users": self.cfg["allowed_users"], "printers": printers,
                 "cloud": {"url": remote.get("url", ""), "has_key": bool(remote)},
-                "notifications": notifications, "channels": self.notifier.channels()}
+                "notifications": notifications, "channels": self.notifier.channels(),
+                "legacy": [{"name": str(p.get("name") or p.get("id") or p["host"]), "host": p["host"]}
+                           for p in old]}
+
+    def import_legacy(self):
+        """Copy the printers from the old printer-dashboard prototype into this config.
+
+        A printer that is already here (same id or same address) is updated with the old
+        settings, which are known to have worked; its serial and secrets are kept when the
+        old file has none. Returns how many printers were imported.
+        """
+        _, old = legacy_printers()
+        if not old:
+            raise config.ConfigError("No printers found in the old printer-dashboard.")
+        raw = config.read_raw(self.config_path)
+        current = [p for p in raw.get("printers", []) if isinstance(p, dict)]
+        for item in old:
+            entry = {k: item[k] for k in IMPORT_FIELDS if k in item and item[k] not in (None, "")}
+            match = next((c for c in current if c.get("id") == entry.get("id")
+                          or str(c.get("host", "")).lower() == str(entry["host"]).lower()), None)
+            if match is None:
+                current.append(entry)
+                continue
+            entry["id"] = match.get("id") or entry.get("id")
+            for field in config.SECRET_FIELDS:
+                if not entry.get(field):
+                    for key in (field, field + "_protected"):
+                        if match.get(key):
+                            entry[key] = match[key]
+            for key in ("serial", "use_ams", "webcam_url"):
+                if not entry.get(key) and match.get(key):
+                    entry[key] = match[key]
+            current[current.index(match)] = entry
+        # Every printer needs an id, and Klipper printers their own Mainsail port.
+        used_ids = set()
+        used_ports = {raw.get("port", 8080), raw.get("admin_port", 8079)}
+        for p in current:
+            pid = re.sub(r"[^a-z0-9]+", "-", str(p.get("id") or p.get("name") or "printer").lower()).strip("-")[:32]
+            pid = pid or "printer"
+            base, n = pid, 2
+            while pid in used_ids:
+                pid = "%s-%d" % (base, n)
+                n += 1
+            used_ids.add(pid)
+            p["id"] = pid
+            if p.get("type") == "klipper":
+                port = p.get("ui_port")
+                if not isinstance(port, int) or port in used_ports:
+                    port = 8101
+                    while port in used_ports:
+                        port += 1
+                p["ui_port"] = port
+                used_ports.add(port)
+        raw["printers"] = current
+        cfg = config.validate(raw)
+        config.protect_secrets(cfg)
+        config.save(self.config_path, cfg)
+        self.reload()
+        return len(old)
 
     def apply_notifications(self, payload):
         """Save notification settings. Empty secret fields keep the saved value; clear_<field> removes it."""
@@ -280,6 +363,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
+
+    def internal_error(self, error):
+        log.exception("request %s %s failed", self.command, urllib.parse.urlsplit(self.path).path)
+        try:
+            self.send_json(500, {"error": "OS_3DPMS error: %s" % (str(error)[:200] or type(error).__name__)})
+        except OSError:
+            pass
 
     def send_json(self, code, obj):
         data = json.dumps(obj).encode()
@@ -403,6 +493,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
+        except Exception as e:  # never drop the connection silently: the page shows this message
+            self.internal_error(e)
 
     def do_POST(self):
         try:
@@ -424,6 +516,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"ok": False, "error": str(e)})
                 self.app.audit(user, "config-saved", printers=len(self.app.printers))
                 return self.send_json(200, {"ok": True})
+            if self.admin and path == "/api/setup/import-old":
+                try:
+                    with self.app.lock:
+                        count = self.app.import_legacy()
+                except config.ConfigError as e:
+                    return self.send_json(400, {"ok": False, "error": str(e)})
+                self.app.audit(user, "config-imported", printers=count)
+                return self.send_json(200, {"ok": True, "imported": count})
             if self.admin and len(parts) == 4 and parts[:3] == ["api", "setup", "check-printer"]:
                 return self.check_printer(parts[3])
             if self.admin and path == "/api/setup/notifications":
@@ -452,6 +552,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
+        except Exception as e:  # never drop the connection silently: the page shows this message
+            self.internal_error(e)
 
     def do_PUT(self):
         self.send_json(405, {"error": "method not allowed"})
@@ -475,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
                 reason = hub.error
             msg = "No picture from the camera"
             if reason:
-                msg += ": %s" % str(reason)[:200]
+                msg += ": %s" % str(reason)[:400]
             return self.send_json(503, {"error": msg})
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
@@ -524,7 +626,7 @@ class Handler(BaseHTTPRequestHandler):
             with hub.cond:
                 reason = hub.error
             if reason:  # the camera reader's own error says what went wrong
-                camera += " Details: %s" % str(reason)[:200]
+                camera += " Details: %s" % str(reason)[:400]
             if p["type"] == "bambu" and not p.get("webcam_url"):
                 code = config.secret(p, "access_code")
                 if code != code.strip() or any(c.isupper() for c in code):

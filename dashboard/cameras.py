@@ -27,6 +27,8 @@ class CameraHub:
         self.stopped = False
         self.cond = threading.Condition()
         self.thread = None
+        self.trying_url = None  # camera URL being tried (Klipper)
+        self.good_url = None    # last camera URL that gave a picture
 
     def active(self):
         return not self.stopped and time.time() - self.last_request < IDLE_SECONDS
@@ -47,6 +49,8 @@ class CameraHub:
 
     def push(self, jpeg):
         with self.cond:
+            if self.trying_url:
+                self.good_url = self.trying_url
             self.frame = jpeg
             self.frame_time = time.time()
             self.error = None
@@ -99,16 +103,55 @@ def read_mjpeg(stream, hub):
             buf.clear()
 
 
-def klipper_camera(hub, url):
+def _stream_from(hub, url):
+    """Show pictures from one camera URL (MJPEG stream or JPEG snapshot) while viewers remain."""
     with urllib.request.urlopen(url, timeout=10) as r:
-        if r.headers.get("Content-Type", "").startswith("image/"):
-            hub.push(r.read(MAX_FRAME_BYTES))
+        ctype = r.headers.get("Content-Type", "").lower()
+        if ctype.startswith("image/"):
+            first = r.read(MAX_FRAME_BYTES)
+            if first[:2] != b"\xff\xd8":
+                raise ConnectionError("not a JPEG picture")
+            hub.push(first)
             while hub.active():  # snapshot URL: poll it
                 time.sleep(0.2)
                 with urllib.request.urlopen(url, timeout=10) as s:
                     hub.push(s.read(MAX_FRAME_BYTES))
             return
+        if ctype and not ctype.startswith(("multipart/", "application/octet-stream", "video/")):
+            raise ConnectionError("not a camera stream (%s)" % ctype.split(";")[0])
         read_mjpeg(r, hub)
+
+
+def klipper_camera(hub, urls):
+    """Try each camera URL until one gives pictures; the one that worked is tried first next time.
+
+    `urls` is a list, or a function that returns one (it may ask the printer, so it runs here,
+    in the camera thread).
+    """
+    if callable(urls):
+        urls = urls()
+    if hub.good_url in urls:
+        urls = [hub.good_url] + [u for u in urls if u != hub.good_url]
+    failures = []
+    for url in urls:
+        if not hub.active():
+            return
+        before = hub.frame_time
+        hub.trying_url = url
+        try:
+            _stream_from(hub, url)
+            return
+        except Exception as e:
+            if hub.frame_time > before:  # it worked, then stopped: start over (this URL goes first)
+                raise
+            failures.append((url, e))
+        finally:
+            hub.trying_url = None
+    if not failures:
+        raise ConnectionError("no camera address to try")
+    url, error = failures[0]
+    more = " (and %d other addresses)" % (len(failures) - 1) if len(failures) > 1 else ""
+    raise ConnectionError("no picture from %s: %s%s" % (url, error, more))
 
 
 def _recv_exact(sock, n):
@@ -142,7 +185,9 @@ def bambu_camera(hub, host, access_code, pins):
                 if not first:
                     raise
                 raise ConnectionError("printer closed the camera connection before the first picture. "
-                                      "Usually a wrong LAN access code") from None
+                                      "Either the LAN access code is wrong, or another app is already "
+                                      "watching this camera (old printer-dashboard, Bambu Studio or "
+                                      "Bambu Handy): P1 and A1 printers allow one camera viewer") from None
             first = False
             size = struct.unpack("<I", header[:4])[0]
             if size <= 0 or size > MAX_FRAME_BYTES:

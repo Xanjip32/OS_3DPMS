@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Klipper cameras: use the camera link Mainsail uses even when it names the printer by
+  hostname or localhost, and fall back to the usual camera addresses when one fails
+- Camera cards and the setup check show which camera address failed and why
+- Setup can import all printers from the old printer-dashboard in one click, including the
+  Bambu access code that worked there
+- Stopping or starting OS_3DPMS turns off the old printer-dashboard and its auto-start, so
+  the two no longer fight over cameras (a Bambu P1S allows one camera viewer)
+- Cloud dashboard has its own Google sign-in; Cloudflare Zero Trust is optional
+
 - New dashboard layout: left sidebar (bottom tabs on phones) with Dashboard, Devices, Queue,
   Files and Settings pages
 - Dashboard shows printing / paused / idle / offline counts, search, All / Active / Inactive

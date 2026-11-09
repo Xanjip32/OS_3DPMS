@@ -205,6 +205,9 @@ summary { cursor: pointer; font-weight: 650; color: var(--text); }
 .msg { font-size: 13px; overflow-wrap: anywhere; }
 .msg.bad, .msg .bad { color: var(--bad); }
 .msg.ok, .msg .ok { color: var(--ok); }
+.legacy-import { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 9px;
+  padding: 12px 14px; margin-bottom: 12px; }
+.legacy-import p { margin: 4px 0 8px; }
 .printer-row { border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; margin-bottom: 10px; }
 .printer-row .kind { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 700; }
 .quiet { border-color: transparent; color: var(--muted); font-size: 12px; }

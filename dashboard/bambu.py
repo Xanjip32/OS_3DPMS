@@ -153,6 +153,10 @@ STATE_MAP = {"RUNNING": "printing", "PREPARE": "printing", "SLICING": "printing"
              "PAUSE": "paused", "FINISH": "complete", "FAILED": "error", "IDLE": "standby"}
 
 
+class LoginRefused(RuntimeError):
+    """The printer rejected the LAN access code."""
+
+
 class BambuWatcher(threading.Thread):
     """Keeps an MQTT connection to the printer and the latest print report."""
 
@@ -197,12 +201,17 @@ class BambuWatcher(threading.Thread):
 
     def run(self):
         while not self.stopped.is_set():
+            wait = 10
             try:
                 self._session()
+            except LoginRefused as e:
+                # Wrong access code: retrying often does not help and may make the printer block us.
+                log.info("bambu %s status: %s", self.p["id"], e)
+                wait = 120
             except Exception as e:
                 log.info("bambu %s status: %s", self.p["id"], e)
             self.connected = False
-            self.stopped.wait(10)
+            self.stopped.wait(wait)
 
     def _send(self, data):
         self.sock.sendall(data)
@@ -223,7 +232,9 @@ class BambuWatcher(threading.Thread):
                 raise ConnectionError("printer did not answer MQTT login")
             kind, ack = pkt
             if kind >> 4 != 2 or len(ack) < 2 or ack[1] != 0:
-                raise RuntimeError("printer refused MQTT login")
+                code = ack[1] if len(ack) > 1 else -1
+                raise LoginRefused("printer refused MQTT login (code %d: %s)" % (
+                    code, "check the LAN access code" if code in (4, 5) else "unexpected answer"))
             sub = struct.pack(">H", 1) + _s16(topic_report) + b"\x00"
             self._send(bytes([0x82]) + _remaining(len(sub)) + sub)
             self._pushall(topic_request)

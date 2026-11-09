@@ -32,35 +32,59 @@ def http_json(p, path, timeout=5):
         return json.loads(r.read(1_000_000).decode("utf-8"))
 
 
-def webcam_url(p):
-    """Webcam URL as configured in Mainsail, via Moonraker's webcam list."""
+def on_printer(url, p):
+    """The same camera URL, but pointed at the printer's configured address.
+
+    Mainsail often stores camera links with the printer's own name (for example
+    http://voron.local:8080/...) or as localhost. Keeping the port, path and query
+    but using the configured IP makes those work from this PC, and it means the
+    dashboard only ever talks to the printer itself.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https"):
+        return None
+    host = "[%s]" % p["host"] if ":" in p["host"] else p["host"]
+    netloc = host if port is None else "%s:%d" % (host, port)
+    return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))
+
+
+def webcam_urls(p):
+    """Camera URLs to try, best first: the ones Mainsail uses, then common defaults."""
     base = base_url(p)
-    if p.get("webcam_url"):
-        return urllib.parse.urljoin(base, p["webcam_url"])
+    if p.get("webcam_url"):  # set by the admin in Setup: use only that
+        return [urllib.parse.urljoin(base, p["webcam_url"])]
     with _webcam_lock:
         cached = _webcam_cache.get(p["id"])
         if cached and time.time() - cached[1] < 300 and cached[2] == base:
-            return cached[0]
-    url = urllib.parse.urljoin(base, "/webcam/?action=stream")
+            return list(cached[0])
+    found = []
     try:
         cams = http_json(p, "/server/webcams/list").get("result", {}).get("webcams", [])
         for cam in cams:
-            if not cam.get("enabled", True):
+            if not isinstance(cam, dict) or not cam.get("enabled", True):
                 continue
             service = cam.get("service", "") or ""
             mjpeg = service.startswith(("mjpegstreamer", "uv4l", "ipstream")) or not service
-            path = cam.get("stream_url") if mjpeg else (cam.get("snapshot_url") or cam.get("stream_url"))
-            if path:
-                candidate = urllib.parse.urljoin(base, path)
-                # Only follow URLs on the printer itself.
-                if urllib.parse.urlsplit(candidate).hostname == p["host"]:
-                    url = candidate
-                break
+            keys = ("stream_url", "snapshot_url") if mjpeg else ("snapshot_url", "stream_url")
+            found += [urllib.parse.urljoin(base, cam[k]) for k in keys if isinstance(cam.get(k), str) and cam[k]]
     except Exception as e:
-        log.info("webcam list for %s failed (%s), using default URL", p["id"], e)
+        log.info("webcam list for %s failed (%s), trying the usual camera addresses", p["id"], e)
+    direct = "http://%s:8080/" % ("[%s]" % p["host"] if ":" in p["host"] else p["host"])
+    found += [urllib.parse.urljoin(base, "/webcam/?action=stream"),
+              urllib.parse.urljoin(base, "/webcam/?action=snapshot"),
+              direct + "?action=stream", direct + "?action=snapshot"]
+    urls = []
+    for url in found:
+        url = on_printer(url, p)
+        if url and url not in urls:
+            urls.append(url)
     with _webcam_lock:
-        _webcam_cache[p["id"]] = (url, time.time(), base)
-    return url
+        _webcam_cache[p["id"]] = (tuple(urls), time.time(), base)
+    return urls
 
 
 def status(p):
