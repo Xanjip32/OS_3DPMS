@@ -15,20 +15,18 @@ import json
 import logging
 import os
 import re
-import socket
 import sys
 import tempfile
 import threading
-import time
 import urllib.error
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, bambu, cameras, cloud, config, klipper, monitor, notify, tailscale, tsinstall
+from . import __version__, bambu, cameras, cloud, config, discover, klipper, monitor, notify, tailscale, tsinstall
 from .forward import Forwarder
-from .tlspin import PinStore
+from .tlspin import CertificateChanged, PinStore
 
 log = logging.getLogger("dashboard")
 
@@ -117,6 +115,8 @@ class App:
         self.monitor = None
         self.connector = None
         self.notifier = notify.Notifier(self)
+        self.bambu_listener = discover.BambuListener()
+        self.bambu_listener.callbacks.append(self._bambu_seen)
         self.reload()
         self.monitor = monitor.Monitor(self)
         self.monitor.start()
@@ -141,6 +141,8 @@ class App:
             self.hubs = {pid: cameras.CameraHub(pid, self._camera_source(p))
                          for pid, p in self.printers.items()}
             self.upload_locks = {pid: threading.Lock() for pid in self.printers}
+            if any(p["type"] == "bambu" and not p.get("serial") for p in cfg["printers"]):
+                self.bambu_listener.listen(600)  # learn the serial number from the printer itself
             self.forwarders = []
             for p in cfg["printers"]:
                 if p["type"] == "klipper" and p.get("ui_port"):
@@ -150,6 +152,27 @@ class App:
                         self.forwarders.append(fw)
                     except OSError as e:
                         log.error("cannot open port %d for %s: %s", p["ui_port"], p["id"], e)
+
+    def _bambu_seen(self, info):
+        """A Bambu printer announced itself: fill in a missing serial number and start live status."""
+        with self.lock:
+            for p in self.cfg["printers"]:
+                if p["type"] != "bambu" or p.get("serial") or p["host"] != info["host"]:
+                    continue
+                p["serial"] = info["serial"]
+                if p["id"] not in self.bambu_watchers:
+                    watcher = bambu.BambuWatcher(p, self.pins)
+                    watcher.start()
+                    self.bambu_watchers[p["id"]] = watcher
+                log.info("%s: serial number %s found on the network", p["id"], info["serial"])
+                try:
+                    raw = config.read_raw(self.config_path)
+                    for item in raw.get("printers", []):
+                        if isinstance(item, dict) and item.get("id") == p["id"] and not item.get("serial"):
+                            item["serial"] = info["serial"]
+                    config.save(self.config_path, config.validate(raw))
+                except (OSError, config.ConfigError) as e:
+                    log.warning("could not save the serial number of %s: %s", p["id"], e)
 
     def _camera_source(self, p):
         if p["type"] == "bambu" and not p.get("webcam_url"):
@@ -526,6 +549,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, "imported": count})
             if self.admin and len(parts) == 4 and parts[:3] == ["api", "setup", "check-printer"]:
                 return self.check_printer(parts[3])
+            if self.admin and path == "/api/setup/discover":
+                return self.send_discovery()
             if self.admin and path == "/api/setup/notifications":
                 try:
                     payload = self.read_json()
@@ -599,10 +624,9 @@ class Handler(BaseHTTPRequestHandler):
             if p["type"] == "klipper":
                 klipper.status(p)
                 printer = "Moonraker responded at %s:%d." % (host, port)
+                printer_ok = True
             else:
-                with socket.create_connection((host, port), timeout=3):
-                    printer = "Bambu LAN port is reachable at %s:%d." % (host, port)
-            printer_ok = True
+                printer_ok, printer = self.check_bambu(p)
         except (OSError, ValueError, KeyError, TypeError) as error:
             printer_ok = False
             if isinstance(error, urllib.error.HTTPError):
@@ -634,6 +658,32 @@ class Handler(BaseHTTPRequestHandler):
                                " case-sensitive: type it exactly as the printer screen shows it.")
         return self.send_json(200, {"printer_ok": printer_ok, "printer": printer,
                                     "camera_ok": camera_ok, "camera": camera})
+
+    def check_bambu(self, p):
+        """(ok, text): log in with the saved access code, as live status and remote start do."""
+        host = p["host"]
+        try:
+            ok, text = bambu.check_login(host, config.secret(p, "access_code"), self.app.pins)
+        except CertificateChanged as e:
+            return False, str(e)
+        if not ok:
+            return False, "%s:8883 is reachable, but the status login failed: %s." % (host, text)
+        if p.get("serial"):
+            watcher = self.app.bambu_watchers.get(p["id"])
+            live = " Live status is connected." if watcher and watcher.connected else ""
+            return True, "Access code accepted (serial %s).%s" % (p["serial"], live)
+        self.app.bambu_listener.listen(60)
+        return True, ("Access code accepted. The serial number is still missing: OS_3DPMS is listening for "
+                      "the printer's announcement to fill it in. You can also enter it under Advanced "
+                      "settings (printer screen: Settings > Device).")
+
+    def send_discovery(self):
+        result = discover.find_printers(self.app.bambu_listener)
+        with self.app.lock:
+            known = {(p["type"], p["host"].lower()) for p in self.app.cfg["printers"]}
+        for item in result["printers"]:
+            item["saved"] = (item["type"], item["host"].lower()) in known
+        return self.send_json(200, result)
 
     def send_stream(self, hub):
         self.send_response(200)

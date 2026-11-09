@@ -285,7 +285,7 @@ function renderPrinters(checkIds = new Set()) {
     const advanced = el('div', { class: 'field-grid' });
     const row = el('div', { class: 'printer-row' },
       el('div', { class: 'kind' }, el('span', { text: p.type === 'bambu' ? 'Bambu Lab' : 'Klipper / Mainsail' }),
-        el('button', { class: 'quiet', text: 'Remove', onclick: () => { printers.splice(i, 1); renderPrinters(); } })),
+        el('button', { class: 'quiet', text: 'Remove', onclick: () => { printers.splice(i, 1); renderPrinters(); renderFound(lastFound); } })),
       fields,
       el('details', { class: 'printer-advanced' }, el('summary', { text: 'Advanced settings' }), advanced));
 
@@ -319,7 +319,7 @@ function renderPrinters(checkIds = new Set()) {
       if (!img) return;
       const parts = [];
       if (p.rotate) parts.push(`rotate(${p.rotate}deg)`);
-      if (p.flip_horizontal) parts.push('scaleX(-1)');
+      if (p.flip_horizontal || p.flip_vertical) parts.push(`scale(${p.flip_horizontal ? -1 : 1}, ${p.flip_vertical ? -1 : 1})`);
       img.style.transform = parts.join(' ');
     };
     const needsSave = () => !p.id || editedPrinters.has(p);
@@ -386,6 +386,96 @@ function addPrinter(type) {
 }
 $('add-klipper').addEventListener('click', () => addPrinter('klipper'));
 $('add-bambu').addEventListener('click', () => addPrinter('bambu'));
+
+// ---------------------------------------------------------------- find printers on the network
+const sameHost = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+const inList = found => printers.find(p => p.type === found.type && sameHost(p.host, found.host));
+
+// Add a found printer as a new row, or fill in what an existing row for that address lacks.
+function addFound(found) {
+  const row = inList(found);
+  if (row) {
+    if (found.type === 'bambu' && !row.serial) { row.serial = found.serial; editedPrinters.add(row); }
+    return false;
+  }
+  const p = { type: found.type, name: found.name, host: found.host, rotate: found.rotate || 0 };
+  if (found.type === 'klipper') {
+    p.ui_port = nextUiPort();
+    if (found.http_port && found.http_port !== 80) p.http_port = found.http_port;
+    p.flip_horizontal = !!found.flip_horizontal;
+    p.flip_vertical = !!found.flip_vertical;
+  } else {
+    p.serial = found.serial;
+  }
+  printers.push(p);
+  return true;
+}
+
+function afterAdding(added) {
+  renderPrinters();
+  renderFound(lastFound);
+  const needCode = printers.some(p => p.type === 'bambu' && !p.id && !p.access_code);
+  $('save-msg').className = 'msg';
+  $('save-msg').textContent = added
+    ? `Added ${added} printer${added === 1 ? '' : 's'}. ${needCode ? 'Type the LAN access code for each Bambu printer (printer screen: Settings > WLAN), then ' : ''}click Save printers.`
+    : 'Updated the printer details. Click Save printers.';
+  const target = needCode ? [...$('printer-list').querySelectorAll('input.code')].find(i => !i.value) : null;
+  if (target) target.focus();
+}
+
+let lastFound = null;
+function renderFound(result) {
+  const box = $('discover-results');
+  if (!result) { box.hidden = true; return; }
+  box.hidden = false;
+  const items = result.printers;
+  const rows = items.map(found => {
+    const row = inList(found);
+    const details = found.type === 'bambu'
+      ? [`Bambu Lab ${found.model}`, found.firmware && `firmware ${found.firmware}`, `serial ${found.serial}`,
+          found.lan_only ? 'LAN only mode' : '', found.rtsp_camera ? 'camera needs a bridge (RTSP)' : '']
+      : [found.state && found.state !== 'ready' ? `Klipper (${found.state})` : 'Klipper',
+          found.cameras ? `${found.cameras} camera${found.cameras > 1 ? 's' : ''}` : 'no camera listed',
+          found.rotate ? `rotated ${found.rotate}°` : ''];
+    const fillSerial = row && found.type === 'bambu' && !row.serial;
+    const add = el('button', { text: fillSerial ? 'Fill in serial' : row ? 'Added' : 'Add',
+      onclick: () => afterAdding(addFound(found) ? 1 : 0) });
+    add.disabled = !!row && !fillSerial;
+    return el('li', {},
+      el('span', { class: 'found-name' }, el('b', { text: found.name }), ` ${found.host}`),
+      el('span', { class: 'found-details', text: details.filter(Boolean).join(' · ') }), add);
+  });
+  const fresh = items.filter(f => !inList(f));
+  const addAll = el('button', { class: 'primary', text: `Add all ${fresh.length} new`, onclick: () => {
+    afterAdding(fresh.reduce((n, f) => n + (addFound(f) ? 1 : 0), 0));
+  } });
+  const notes = [];
+  if (!result.networks.length) notes.push('This PC is not on a home or office network (192.168.x.x, 10.x.x.x or 172.16-31.x.x).');
+  if (result.bambu_error) notes.push(`Bambu printers could not be searched: ${result.bambu_error}. Windows may ask to allow Python on the network.`);
+  if (!items.length) notes.push(`No printers answered on ${result.networks.join(', ') || 'this network'}. Add them by address below.`);
+  box.replaceChildren(
+    el('strong', { text: items.length ? `Found ${items.length} printer${items.length === 1 ? '' : 's'}` : 'No printers found' }),
+    ...(items.length ? [el('ul', { class: 'found-list' }, ...rows)] : []),
+    ...notes.map(n => el('p', { class: 'field-help', text: n })),
+    el('div', { class: 'actions' }, ...(fresh.length > 1 ? [addAll] : []),
+      el('button', { class: 'quiet', text: 'Close', onclick: () => { lastFound = null; renderFound(null); } })));
+}
+
+$('discover').addEventListener('click', async () => {
+  const btn = $('discover');
+  const box = $('discover-results');
+  btn.disabled = true;
+  box.hidden = false;
+  box.replaceChildren(el('span', { class: 'msg', text: 'Searching the network for printers (about 10 seconds)…' }));
+  try {
+    lastFound = await api('/api/setup/discover', {});
+    renderFound(lastFound);
+  } catch (e) {
+    box.replaceChildren(el('span', { class: 'msg bad', text: `Search failed: ${e.message}` }));
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // Printers found in the old printer-dashboard prototype: offer to copy them in one click.
 function renderLegacy(legacy) {

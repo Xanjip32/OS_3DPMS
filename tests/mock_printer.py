@@ -36,7 +36,13 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/server/webcams/list"):
             self._json({"result": {"webcams": [
-                {"enabled": True, "service": "mjpegstreamer", "stream_url": "/webcam/?action=stream"}]}})
+                {"enabled": True, "service": "mjpegstreamer", "stream_url": "/webcam/?action=stream",
+                 "rotation": 180, "flip_horizontal": False, "flip_vertical": True}]}})
+        elif self.path.startswith("/server/info"):
+            self._json({"result": {"klippy_connected": True, "klippy_state": "ready"}})
+        elif self.path.startswith("/server/database/item?namespace=mainsail"):
+            self._json({"result": {"namespace": "mainsail", "key": "general",
+                                   "value": {"printername": "Mock Voron"}}})
         elif self.path.startswith("/webcam"):
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace;boundary=b")

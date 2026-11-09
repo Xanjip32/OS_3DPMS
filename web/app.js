@@ -195,6 +195,7 @@ function buildTile(p) {
         frameUrl = url;
         t.classList.remove('nocam');
       };
+      img.onerror = () => URL.revokeObjectURL(url);   // damaged picture: wait for the next one
       img.src = url;
       setTimeout(nextFrame, monitorOnly ? 4000 : FRAME_MS);
     } catch (e) {

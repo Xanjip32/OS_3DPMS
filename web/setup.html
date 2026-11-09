@@ -22,9 +22,11 @@
   <section class="card printers-card" aria-labelledby="printers-heading">
     <h2 id="printers-heading">Printers <span class="state" id="pr-state"></span></h2>
     <div class="actions add-printer">
+      <button class="primary" id="discover" title="Search this PC's network for Klipper and Bambu Lab printers">Find printers on my network</button>
       <button id="add-klipper">+ Add Klipper</button>
       <button id="add-bambu">+ Add Bambu</button>
     </div>
+    <div id="discover-results" class="discover-results" hidden></div>
     <div id="printer-list"></div>
     <div class="actions card-footer">
       <button class="primary" id="save">Save printers</button>

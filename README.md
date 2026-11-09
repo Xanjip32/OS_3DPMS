@@ -38,7 +38,8 @@ Works with a mix of printers:
 2. Double-click **`install.bat`**. The Windows package includes Python. The source download
    can use an existing Python or install it with `winget`. The installer sets OS_3DPMS to start
    at login and opens [Setup](http://127.0.0.1:8079/setup).
-3. Choose **Add Klipper** or **Add Bambu**, enter the printer IP, and click **Save printers**.
+3. Click **Find printers on my network** and **Add all**, or choose **Add Klipper** / **Add Bambu**
+   and enter the printer IP. Then click **Save printers**.
    Bambu printers also need the LAN access code. Setup checks the printer and shows a camera
    preview as soon as it receives a frame. Click **Open live dashboard** to see your feeds.
 
@@ -84,13 +85,19 @@ provides an HTTP MJPEG stream or a JPEG snapshot works here. Set **Camera URL ov
 in setup to use a different HTTP MJPEG or JPEG snapshot URL. If uploads fail with 401, add the printer PC to
 `trusted_clients` in `moonraker.conf`, or enter a Moonraker API key on the setup page.
 
-**Bambu Lab.** You need the LAN access code (printer screen: Settings → Network). Uploads
-go to the SD card, so a card must be inserted. To start prints remotely, also enter the
-serial number (Settings → Device) and send `.gcode.3mf` files exported from Bambu Studio or
-OrcaSlicer. The serial number also turns on live status and notifications for the printer. Newer firmware may require *LAN Only Mode* / *Developer Mode* for third-party
+**Bambu Lab.** You need the LAN access code (printer screen: Settings → WLAN / Network). The
+code changes when LAN mode is switched off and on, so read it again if the camera stops
+working. Uploads go to the SD card, so a card must be inserted. The serial number turns on
+live status, notifications and remote start: **Find printers** fills it in, and OS_3DPMS also
+picks it up from the printer's network announcement when it is left empty. Send `.gcode.3mf`
+files exported from Bambu Studio or OrcaSlicer to start prints remotely.
+**Check connection** in setup logs in with the access code and says if the printer refuses it.
+P1 and A1 printers allow one camera viewer at a time: close Bambu Studio's or Handy's camera
+view, or other viewers, while OS_3DPMS shows the camera. Newer firmware may require *LAN Only Mode* / *Developer Mode* for third-party
 tools, and future firmware updates may change this.
-The built-in camera reader uses the Bambu JPEG feed on port 6000. For cameras that
-use RTSP, set **Camera URL override** to an HTTP MJPEG or JPEG snapshot from a camera bridge.
+The built-in camera reader uses the Bambu JPEG feed on port 6000 (P1P, P1S, A1, A1 mini). X1, H2D
+and P2S cameras use RTSP on port 322: setup says so, and you can set **Camera URL override** to an
+HTTP MJPEG or JPEG snapshot from a camera bridge such as go2rtc.
 
 ## Notifications
 

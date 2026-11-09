@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Setup: **Find printers on my network** finds Klipper and Bambu Lab printers and adds them in
+  one click, with their name, camera rotation and the Bambu serial number
+- Bambu: a missing serial number is filled in from the printer's network announcement, which
+  turns on live status, notifications and remote start
+- Bambu: **Check connection** logs in with the saved access code and says when it is refused
+- Bambu camera: empty frame headers no longer end the connection; X1, H2D and P2S printers are
+  named as RTSP cameras that need a bridge
+- Bambu status: a print stopped on the printer shows as cancelled, not failed; print errors use
+  Bambu's own code format (for example 0300-400C)
+- Cameras: a failing camera answers in about a second instead of eight, so it no longer slows the
+  other camera cards; retries slow down from 3 to 30 seconds; HTTP 500 from a Klipper camera
+  explains that the printer's camera service (crowsnest) has no picture
+- Fixed a socket leak on every retry of a camera that answers with an HTTP error
+- CI: fixed the lint failure (unused import) and test on Python 3.10, since GitHub's Ubuntu 26.04
+  runners no longer have Python 3.9
+
 - Klipper cameras: use the camera link Mainsail uses even when it names the printer by
   hostname or localhost, and fall back to the usual camera addresses when one fails
 - Camera cards and the setup check show which camera address failed and why

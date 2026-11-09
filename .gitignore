@@ -17,3 +17,6 @@ __pycache__/
 *.pyc
 .venv/
 .ruff_cache/
+
+# Backups of config.json (they contain encrypted secrets)
+config.json.bak

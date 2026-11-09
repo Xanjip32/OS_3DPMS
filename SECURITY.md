@@ -22,6 +22,7 @@ a user's browser, and the printers' network traffic.
 | Risk | Control |
 |------|---------|
 | Anyone on the LAN opens the dashboard or Mainsail | Every listener binds to `127.0.0.1`. No firewall ports are opened. Remote access exists only through `tailscale serve`. |
+| Printer discovery | **Find printers** in setup asks each address of this PC's private /24 networks for Moonraker's `/server/info` (ports 80 and 7125), only when clicked. Bambu announcements are received on UDP port 2021 while setup searches, or while a saved Bambu printer still lacks its serial number. That socket only receives: it never answers. The printer address is taken from the packet's sender, and names are length-limited and inserted with `textContent`. |
 | Unauthenticated access through Tailscale | The dashboard requires the `Tailscale-User-Login` header that `tailscale serve` sets (and strips from clients). Optional `allowed_users` allow-list. |
 | Setup page reachable remotely | The admin listener is never published, and it refuses any `Host` header other than `127.0.0.1`/`localhost` (blocks DNS rebinding). |
 | Malicious website sends uploads (CSRF) | POST requests need the `X-Dashboard: 1` header (forces a CORS preflight that is never granted), a matching `Origin`, and `Sec-Fetch-Site: same-origin`. |

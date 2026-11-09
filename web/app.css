@@ -201,6 +201,7 @@ summary { cursor: pointer; font-weight: 650; color: var(--text); }
 .printer-empty p { margin-top: 4px; }
 .add-printer { margin-bottom: 12px; }
 .add-printer button { color: var(--accent); border-color: #bdcfe0; }
+.add-printer button.primary { color: #fff; border-color: var(--accent); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
 .msg { font-size: 13px; overflow-wrap: anywhere; }
 .msg.bad, .msg .bad { color: var(--bad); }
@@ -208,6 +209,14 @@ summary { cursor: pointer; font-weight: 650; color: var(--text); }
 .legacy-import { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 9px;
   padding: 12px 14px; margin-bottom: 12px; }
 .legacy-import p { margin: 4px 0 8px; }
+.discover-results { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 9px;
+  padding: 12px 14px; margin-bottom: 12px; }
+.discover-results[hidden] { display: none; }
+.found-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.found-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.found-list .found-name { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.found-list .found-details { flex: 2 1 220px; color: var(--muted); font-size: 13px; }
 .printer-row { border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; margin-bottom: 10px; }
 .printer-row .kind { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 700; }
 .quiet { border-color: transparent; color: var(--muted); font-size: 12px; }
