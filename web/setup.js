@@ -383,7 +383,8 @@ function addPrinter(type) {
 $('add-klipper').addEventListener('click', () => addPrinter('klipper'));
 $('add-bambu').addEventListener('click', () => addPrinter('bambu'));
 
-$('save').addEventListener('click', async () => {
+const saveBtn = $('save');
+saveBtn.addEventListener('click', async () => {
   const msg = $('save-msg');
   const missingHost = printers.findIndex(p => !p.host);
   if (missingHost !== -1) {
@@ -408,16 +409,25 @@ $('save').addEventListener('click', async () => {
   });
   msg.className = 'msg';
   msg.textContent = 'Saving…';
+  const sent = new Set(printers);
+  saveBtn.disabled = true;
   try {
     await api('/api/setup/config', { printers: payload });
     msg.className = 'msg ok';
-    msg.textContent = 'Printers saved.';
-    printers = (await api('/api/setup/config')).printers;
+    msg.textContent = `Printers saved (${payload.length}).`;
+    // Keep rows that were added while the save was running; they are not saved yet.
+    const addedMeanwhile = printers.filter(p => !sent.has(p));
+    printers = (await api('/api/setup/config')).printers.concat(addedMeanwhile);
     renderPrinters(checkIds);
     refresh();
   } catch (e) {
     msg.className = 'msg bad';
-    msg.textContent = e.message;
+    msg.textContent = e instanceof TypeError
+      ? 'Not saved: this page cannot reach OS_3DPMS. Start it with start.bat, then reload this page.'
+      : `Not saved: ${e.message}`;
+    msg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  } finally {
+    saveBtn.disabled = false;
   }
 });
 

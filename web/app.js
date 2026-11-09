@@ -7,8 +7,11 @@ const ACTIVE = new Set(['printing', 'paused']);
 const $ = id => document.getElementById(id);
 const grid = $('grid');
 const visibleCameras = new WeakSet();
+// Cards count as visible until the observer has reported on them, so cameras start at once.
+const seenByObserver = new WeakSet();
 const cameraObserver = new IntersectionObserver(entries => {
   for (const entry of entries) {
+    seenByObserver.add(entry.target);
     if (entry.isIntersecting) visibleCameras.add(entry.target);
     else visibleCameras.delete(entry.target);
   }
@@ -150,6 +153,7 @@ function buildTile(p) {
     stopped = true;
     cameraObserver.unobserve(t);
     img.removeAttribute('src');
+    if (frameUrl) URL.revokeObjectURL(frameUrl);
   };
   t.update = st => {
     chipEl.textContent = st && st.state ? stateText(st) : '';
@@ -167,22 +171,39 @@ function buildTile(p) {
 
   img.style.transform = camTransform(p);
 
-  // Camera: poll snapshots while the card is on screen. Short requests keep connections free.
-  function nextFrame() {
+  // Camera: fetch snapshots while the card is on screen. Short requests keep connections free.
+  // fetch (not img.src) so the server's reason is shown when there is no picture.
+  let frameUrl = '';
+  async function nextFrame() {
     if (stopped) return;
-    if (document.hidden || !visibleCameras.has(t) || modal.classList.contains('show')) {
+    const offscreen = seenByObserver.has(t) && !visibleCameras.has(t);
+    if (document.hidden || offscreen || modal.classList.contains('show')) {
       setTimeout(nextFrame, 1000);
       return;
     }
-    img.src = `/snap/${id}?t=${Date.now()}`;
+    try {
+      const r = await fetch(`/snap/${id}?t=${Date.now()}`, { cache: 'no-store' });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || `Camera error (HTTP ${r.status})`);
+      }
+      const blob = await r.blob();
+      if (stopped) return;
+      const url = URL.createObjectURL(blob);
+      img.onload = () => {
+        if (frameUrl) URL.revokeObjectURL(frameUrl);
+        frameUrl = url;
+        t.classList.remove('nocam');
+      };
+      img.src = url;
+      setTimeout(nextFrame, monitorOnly ? 4000 : FRAME_MS);
+    } catch (e) {
+      if (stopped) return;
+      t.classList.add('nocam');
+      nocam.textContent = `${e.message || 'Camera offline'}. Retrying…`;
+      setTimeout(nextFrame, 3000);
+    }
   }
-  img.addEventListener('load', () => { t.classList.remove('nocam'); setTimeout(nextFrame, monitorOnly ? 4000 : FRAME_MS); });
-  img.addEventListener('error', () => {
-    if (stopped) return;
-    t.classList.add('nocam');
-    nocam.textContent = 'Camera offline. Retrying…';
-    setTimeout(nextFrame, 3000);
-  });
   cameraObserver.observe(t);
   nextFrame();
 

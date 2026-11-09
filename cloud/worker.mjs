@@ -5,7 +5,7 @@ const idPattern = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const headers = {
   'Cache-Control': 'no-store',
   'X-Content-Type-Options': 'nosniff',
-  'Content-Security-Policy': "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
 const json = (value, status = 200) => Response.json(value, { status, headers });
 

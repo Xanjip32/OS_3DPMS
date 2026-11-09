@@ -47,7 +47,7 @@ UPLOAD_EXTENSIONS = (".gcode", ".gco", ".g", ".3mf")
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost"}
 MAX_JSON_BODY = 64 * 1024
 MAX_CONNECTIONS = 100
-CSP = ("default-src 'self'; img-src 'self'; script-src 'self'; style-src 'self'; "
+CSP = ("default-src 'self'; img-src 'self' blob:; script-src 'self'; style-src 'self'; "
        "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors 'none'")
 EDITABLE_FIELDS = ("id", "name", "type", "host", "ui_port", "http_port", "webcam_url", "rotate",
@@ -471,7 +471,12 @@ class Handler(BaseHTTPRequestHandler):
     def send_snapshot(self, hub):
         frame = hub.snapshot()
         if frame is None:
-            return self.send_json(503, {"error": "camera offline"})
+            with hub.cond:
+                reason = hub.error
+            msg = "No picture from the camera"
+            if reason:
+                msg += ": %s" % str(reason)[:200]
+            return self.send_json(503, {"error": msg})
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Content-Length", str(len(frame)))
