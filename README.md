@@ -10,10 +10,9 @@ enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a
 and confirm its camera appears. Setup and the dashboard work on that PC without
 a remote access account.
 
-**Remote access:** Tailscale (recommended) gives you the whole dashboard from your phone or
-laptop anywhere, privately and at full speed: cameras, Mainsail, Files and Queue. The optional
-[Cloudflare dashboard](cloud/README.md) adds a quick look from any browser and phone alerts; its
-**Full dashboard** and **Mainsail** buttons open the Tailscale pages on devices where Tailscale is on.
+**Remote access:** Tailscale gives you the whole dashboard from your phone or laptop anywhere,
+privately and at full speed: cameras, Mainsail, Files and Queue. Nothing is opened to the public
+internet. Phone alerts while the app is closed come through ntfy, Discord or Telegram.
 
 Works with a mix of printers:
 
@@ -29,7 +28,7 @@ Works with a mix of printers:
 - Drag and drop G-code upload, with an optional "start print" (skipped when the printer is busy)
 - Files page: keep G-code and 3MF files on the printer PC (the `files` folder next to
   `config.json`) and send any of them to any printer, with or without starting the print. Shows
-  the free disk space. Works on the PC and over Tailscale; the cloud dashboard only points there
+  the free disk space. Works on the PC and over Tailscale
 - Queue page: line up files per printer (**Add to queue** on the Files page). Each printer runs its
   jobs in order; when it is free (standby, finished or cancelled), its next job shows **Bed is
   clear, start**. Nothing starts by itself. The queue is kept in `queue.json` next to `config.json`

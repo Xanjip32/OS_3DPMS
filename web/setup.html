@@ -66,26 +66,11 @@
     </div>
   </details>
 
-  <details class="card remote-card">
-    <summary>Cloud dashboard <span class="state" id="cloud-state">Optional</span></summary>
-    <p>Optional. A quick look at cameras and status from any browser without installing anything, and phone
-      alerts. Connect this printer PC to your Cloudflare dashboard.</p>
-    <div class="setup-group field-grid">
-      <label class="field">Dashboard address<input id="cloud-url" type="url" placeholder="https://os3dpms.example.workers.dev"></label>
-      <label class="field">Connection key<input id="cloud-key" type="password" autocomplete="off"></label>
-      <div class="actions">
-        <button id="save-cloud">Connect</button>
-        <a id="open-cloud" class="btn hidden" target="_blank" rel="noopener">Open dashboard</a>
-        <span class="msg" id="cloud-msg" role="status"></span>
-      </div>
-    </div>
-    <p id="cloud-detail" class="field-help"></p>
-  </details>
   </div>
 
   <details class="card notification-card">
     <summary>Phone notifications <span class="state" id="nt-state"></span></summary>
-    <p>Choose when to get an alert. In the cloud dashboard, tap Enable alerts on your phone. The services below are optional.</p>
+    <p>Choose when to get an alert, and where: for alerts on your phone, even when the app is closed, use ntfy (a free phone app), Discord or Telegram.</p>
     <h3>Print events</h3>
     <div class="actions" id="nt-events"></div>
     <label class="check"><input type="checkbox" id="nt-snapshot"> Attach a camera picture

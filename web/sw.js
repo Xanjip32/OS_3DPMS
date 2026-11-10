@@ -13,15 +13,6 @@ display:flex;align-items:center;justify-content:center;min-height:100vh;text-ali
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
-self.addEventListener('push', event => {
-  if (!event.data) return;
-  const message = event.data.json();
-  event.waitUntil(self.registration.showNotification(message.title || 'OS_3DPMS', {
-    body: message.body,
-    icon: '/icon-192.png',
-  }));
-});
-
 self.addEventListener('fetch', event => {
   if (event.request.mode !== 'navigate') return;   // camera streams and API calls go straight to the network
   event.respondWith(fetch(event.request).catch(() => new Response(OFFLINE_PAGE, {

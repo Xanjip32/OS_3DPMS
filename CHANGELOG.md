@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Removed the Cloudflare cloud dashboard. Tailscale is the one way in from outside: faster,
+  private, and nothing on the public internet. Phone alerts while the app is closed use ntfy,
+  Discord or Telegram (Setup → Phone notifications). An old Cloudflare key in `config.json` is
+  removed from the file the next time OS_3DPMS starts
+
 ## 1.5.0-preview.1 (2026-11-10)
 
 - Devices page: **+ Add printer**, and **Edit** / **Remove** on each printer (on the printer PC).

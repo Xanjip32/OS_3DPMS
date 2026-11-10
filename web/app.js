@@ -1,7 +1,6 @@
 'use strict';
 
 const FRAME_MS = 200;               // grid refresh: about 5 frames per second per camera
-const CLOUD_FRAME_MS = 2000;        // cloud dashboard without its live link: one picture every 2 s
 const STALE_MS = 20000;             // keep showing the last picture this long before explaining the gap
 const STATUS_MS = 5000;
 const UPLOAD_RE = /\.(gcode|gco|g|3mf)$/i;
@@ -21,11 +20,6 @@ const cameraObserver = new IntersectionObserver(entries => {
 
 let info = {};
 let maxUploadMb = 1024;
-let monitorOnly = false;
-let pushKey = '';
-let pushRegistered = false;
-let pushManager = null;
-let pushSubscription = null;
 
 let printers = [];
 const statuses = new Map();          // printer id -> last status from the server
@@ -51,11 +45,8 @@ function save(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* no storage */ }
 }
 
-// On the cloud dashboard, Mainsail and the full dashboard open over Tailscale (the owner's own devices only).
-const tailnetUrl = url => (/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net(:\d{1,5})?\/?$/i.test(url || '') ? url : '');
-
 function mainsailUrl(p) {
-  return monitorOnly ? tailnetUrl(p.mainsail) : `${location.protocol}//${location.hostname}:${p.ui_port}/`;
+  return `${location.protocol}//${location.hostname}:${p.ui_port}/`;
 }
 
 // Camera orientation from config: rotate (degrees), flip_horizontal, flip_vertical.
@@ -89,62 +80,8 @@ function chip(st) {
 }
 
 function canMainsail(p) {
-  return monitorOnly ? !!tailnetUrl(p.mainsail) : !!p.ui_port;
+  return !!p.ui_port;
 }
-
-// ---------------------------------------------------------------- cloud live link
-// On the cloud dashboard the printer PC pushes camera pictures over one WebSocket and this page
-// receives them over another, so a picture shows as soon as it exists. Each card or the big view
-// registers a viewer { id, wanted(), frame(blob) -> Promise, error(text) }. While the link is
-// down, they ask for one picture at a time instead.
-const live = {
-  socket: null,
-  open: false,
-  retry: 1000,
-  watching: '',
-  viewers: new Set(),
-  start() {
-    if (!monitorOnly || !('WebSocket' in window)) return;
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/live`);
-    ws.binaryType = 'arraybuffer';
-    this.socket = ws;
-    ws.onopen = () => { this.open = true; this.retry = 1000; this.watching = ''; this.sync(); };
-    ws.onmessage = e => this.receive(e.data);
-    ws.onclose = () => {
-      this.open = false;
-      this.socket = null;
-      setTimeout(() => this.start(), this.retry);
-      this.retry = Math.min(this.retry * 2, 30000);
-    };
-  },
-  // Tell the cloud which cameras are on screen now.
-  sync() {
-    if (!this.open) return;
-    const ids = [...new Set([...this.viewers].filter(v => v.wanted()).map(v => v.id))].sort();
-    const text = JSON.stringify({ watch: ids });
-    if (text !== this.watching) {
-      this.watching = text;
-      this.socket.send(text);
-    }
-  },
-  receive(data) {
-    if (typeof data === 'string') {
-      let message = null;
-      try { message = JSON.parse(data); } catch (e) { return; }
-      for (const v of this.viewers) if (v.id === message?.camera && message.error) v.error(message.error);
-      return;
-    }
-    const bytes = new Uint8Array(data);
-    const id = String.fromCharCode(...bytes.subarray(1, 1 + bytes[0]));
-    const blob = new Blob([bytes.subarray(1 + bytes[0])], { type: 'image/jpeg' });
-    const drawn = [...this.viewers].filter(v => v.id === id && v.wanted()).map(v => v.frame(blob));
-    // Ask for the next picture only when this one is on screen: a slow device skips pictures.
-    Promise.allSettled(drawn).then(() => {
-      if (this.open) this.socket.send(JSON.stringify({ ack: id }));
-    });
-  },
-};
-setInterval(() => { live.sync(); for (const v of live.viewers) v.tick?.(); }, 1000);
 
 // Show a JPEG blob in an <img>; resolves once it is drawn (or could not be).
 function drawInto(image, blob, onDrawn) {
@@ -173,35 +110,12 @@ const mimg = $('mimg');
 let modalPrinter = null;
 let modalTimer;
 
-let modalFrameAt = 0;
-const modalViewer = {
-  get id() { return modalPrinter?.id; },
-  wanted: () => !!modalPrinter && !document.hidden,
-  frame: blob => (modalPrinter ? drawInto(mimg, blob, () => { modalFrameAt = Date.now(); }) : Promise.resolve()),
-  error: () => {},
-};
-
 function openModal(p) {
   modalPrinter = p;
   $('mname').textContent = p.name;
   $('mopen').classList.toggle('hidden', !canMainsail(p));
   mimg.style.transform = camTransform(p);
-  if (monitorOnly) {
-    live.viewers.add(modalViewer);
-    live.sync();
-    const refresh = async () => {
-      if (!document.hidden && Date.now() - modalFrameAt > 5000 && modalPrinter === p) {
-        try {
-          const r = await fetch(`/snap/${encodeURIComponent(p.id)}?t=${Date.now()}`, { cache: 'no-store' });
-          if (r.ok && modalPrinter === p) await drawInto(mimg, await r.blob(), () => { modalFrameAt = Date.now(); });
-        } catch (e) { /* keep the last picture */ }
-      }
-      if (modalPrinter === p) modalTimer = setTimeout(refresh, CLOUD_FRAME_MS);
-    };
-    refresh();
-  } else {
-    mimg.src = `/cam/${encodeURIComponent(p.id)}?t=${Date.now()}`;
-  }
+  mimg.src = `/cam/${encodeURIComponent(p.id)}?t=${Date.now()}`;
   modal.classList.add('show');
 }
 function closeModal() {
@@ -209,8 +123,6 @@ function closeModal() {
   modal.classList.remove('show');
   clearImage(mimg);
   modalPrinter = null;
-  live.viewers.delete(modalViewer);
-  live.sync();
 }
 $('mclose').addEventListener('click', closeModal);
 $('mopen').addEventListener('click', () => window.open(mainsailUrl(modalPrinter), '_blank', 'noopener'));
@@ -240,7 +152,6 @@ function buildTile(p) {
   const bar = q('.progress > div');
   const input = q('input[type=file]');
   const sendBtn = q('.send');
-  if (monitorOnly) sendBtn.classList.add('hidden');
   const startBox = q('.start');
   let pending = null;
   let busy = false;
@@ -249,7 +160,6 @@ function buildTile(p) {
   t.stop = () => {
     stopped = true;
     cameraObserver.unobserve(t);
-    live.viewers.delete(viewer);
     clearImage(img);
   };
   t.update = st => {
@@ -257,7 +167,7 @@ function buildTile(p) {
     chipEl.className = 'chip ' + ((st && st.state) || '');
     if (!busy) fileLine.textContent = st && ACTIVE.has(st.state) ? (st.file || '') : '';
   };
-  t.pick = () => { if (!monitorOnly) input.click(); };
+  t.pick = () => input.click();
   t.isBusy = () => busy;
 
   q('.hide').addEventListener('click', e => {
@@ -268,12 +178,10 @@ function buildTile(p) {
 
   img.style.transform = camTransform(p);
 
-  // Camera: pictures while the card is on screen. On the cloud dashboard they come over the live
-  // link; otherwise (or while that link is down) the card fetches one picture at a time, with fetch
-  // (not img.src) so the server's reason is shown when there is none. A missed picture never
-  // blanks the card: the last one stays until no new picture came for STALE_MS.
+  // Camera: pictures while the card is on screen, one at a time with fetch (not img.src) so the
+  // server's reason is shown when there is none. A missed picture never blanks the card: the last
+  // one stays until no new picture came for STALE_MS.
   let lastFrame = 0;
-  let waitingSince = 0;
   let lastError = '';
   const onScreen = () => !document.hidden && !modal.classList.contains('show')
     && !(seenByObserver.has(t) && !visibleCameras.has(t));
@@ -289,25 +197,9 @@ function buildTile(p) {
     nocam.textContent = `${lastError}. Retrying…`;
     t.classList.add('nocam');
   }
-  const viewer = {
-    id: p.id,
-    wanted: () => !stopped && onScreen(),
-    frame: show,
-    error: explain,
-    tick() {   // live link: notice when pictures stop coming
-      if (!live.open || !this.wanted()) { waitingSince = 0; return; }
-      waitingSince ||= Date.now();
-      if (Date.now() - Math.max(lastFrame, waitingSince) > STALE_MS) {
-        explain(lastError || 'No new picture from the printer PC for 20 seconds');
-      }
-    },
-  };
-  if (monitorOnly) live.viewers.add(viewer);
-
   async function nextFrame() {
     if (stopped) return;
-    // While the live link delivers, it is enough; after 5 s without a picture, ask as well.
-    if (!onScreen() || (monitorOnly && live.open && Date.now() - lastFrame < 5000)) {
+    if (!onScreen()) {
       setTimeout(nextFrame, 1000);
       return;
     }
@@ -318,11 +210,11 @@ function buildTile(p) {
         throw new Error(data.error || `Camera error (HTTP ${r.status})`);
       }
       await show(await r.blob());
-      setTimeout(nextFrame, monitorOnly ? CLOUD_FRAME_MS : FRAME_MS);
+      setTimeout(nextFrame, FRAME_MS);
     } catch (e) {
       if (stopped) return;
       explain(e.message);
-      setTimeout(nextFrame, monitorOnly ? CLOUD_FRAME_MS : 3000);
+      setTimeout(nextFrame, 3000);
     }
   }
   nocam.textContent = 'Loading camera…';
@@ -337,7 +229,7 @@ function buildTile(p) {
 
   // Upload: drag and drop, or file picker
   let depth = 0;
-  t.addEventListener('dragenter', e => { e.preventDefault(); if (monitorOnly) return; depth++; t.classList.add('drag'); });
+  t.addEventListener('dragenter', e => { e.preventDefault(); depth++; t.classList.add('drag'); });
   t.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; t.classList.remove('drag'); } });
   t.addEventListener('dragover', e => e.preventDefault());
   t.addEventListener('drop', e => {
@@ -351,7 +243,6 @@ function buildTile(p) {
   startBox.addEventListener('change', () => q('.warn').classList.toggle('hidden', !startBox.checked));
 
   function ask(file) {
-    if (monitorOnly) return;
     if (busy) { toast(`${p.name}: upload already running`, true); return; }
     if (!UPLOAD_RE.test(file.name)) { toast('Only .gcode or .3mf files', true); return; }
     if (file.size > maxUploadMb * 1048576) { toast(`File is larger than ${maxUploadMb} MB`, true); return; }
@@ -531,7 +422,7 @@ function actionButtons(p, withSend) {
   const box = el('div', { class: 'row-actions' });
   box.append(el('button', { text: 'Camera', onclick: () => openModal(p) }));
   if (canMainsail(p)) box.append(el('button', { text: 'Mainsail', onclick: () => window.open(mainsailUrl(p), '_blank', 'noopener') }));
-  if (withSend && !monitorOnly && tiles.has(p.id)) {
+  if (withSend && tiles.has(p.id)) {
     box.append(el('button', { class: 'primary', text: 'Send file', onclick: () => {
       view = 'grid';
       save('os3dpms.view', view);
@@ -596,11 +487,6 @@ let fileNames = new Set();
 
 async function renderFiles() {
   if (!('user' in info)) return;   // start() renders again once it knows where this page runs
-  if (monitorOnly) {
-    filesAdd.classList.add('hidden');
-    notice(filesBox, 'Files are kept on the printer PC. Open the dashboard on that PC or over Tailscale to upload and send them.');
-    return;
-  }
   let data;
   try {
     const r = await fetch('/api/files');
@@ -664,10 +550,6 @@ const queueBox = $('queue');
 
 async function renderQueue() {
   if (!('user' in info)) return;   // start() renders again once it knows where this page runs
-  if (monitorOnly) {
-    notice(queueBox, 'The print queue is kept on the printer PC. Open the dashboard on that PC or over Tailscale to use it.');
-    return;
-  }
   let data;
   try {
     const r = await fetch('/api/queue');
@@ -786,14 +668,11 @@ document.addEventListener('click', e => { if (!hiddenMenu.contains(e.target)) to
 
 // ---------------------------------------------------------------- settings page
 function renderSettings() {
-  $('account-text').textContent = monitorOnly
-    ? `Signed in as ${info.user || 'the dashboard owner'}. This is the cloud dashboard: it shows cameras and status from anywhere.`
-    : info.admin ? 'You are on the printer PC itself.'
-      : `Signed in through Tailscale as ${info.user || 'a tailnet user'}.`;
-  $('sign-out').classList.toggle('hidden', !(monitorOnly && info.logout === '/auth/logout'));
+  $('account-text').textContent = info.admin ? 'You are on the printer PC itself.'
+    : `Signed in through Tailscale as ${info.user || 'a tailnet user'}.`;
   $('setup-text').textContent = info.admin
-    ? 'Add or edit printers, phone notifications and the cloud dashboard.'
-    : 'Printers, notifications and the cloud connection are set up on the printer PC (Setup page).';
+    ? 'Add or edit printers, phone notifications and remote access.'
+    : 'Printers, phone notifications and remote access are set up on the printer PC (Setup page).';
   const actions = [];
   if (!installBtn.classList.contains('hidden')) actions.push(el('button', { text: 'Install app', onclick: () => installBtn.click() }));
   if (!alertsBtn.classList.contains('hidden')) actions.push(el('button', { text: alertsBtn.textContent, onclick: () => alertsBtn.click() }));
@@ -840,28 +719,8 @@ const alertsBtn = $('alerts');
 const canNotify = 'Notification' in window && window.isSecureContext;
 function updateAlertsButton() {
   // Stays visible when notifications are blocked, so a click can explain how to allow them.
-  if (monitorOnly) {
-    alertsBtn.classList.toggle('hidden', !canNotify || !pushKey || !('PushManager' in window));
-    alertsBtn.textContent = pushRegistered ? 'Test alerts' : 'Enable alerts';
-  } else {
-    alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission === 'granted');
-  }
+  alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission === 'granted');
   renderSettings();
-}
-
-const withTimeout = (promise, ms, message) => Promise.race([promise,
-  new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))]);
-
-async function postAlerts(path) {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
-    body: JSON.stringify(pushSubscription),
-  });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({}));
-    throw new Error(result.error || `Could not set up alerts (HTTP ${response.status}).`);
-  }
 }
 
 alertsBtn.addEventListener('click', async () => {
@@ -880,29 +739,8 @@ alertsBtn.addEventListener('click', async () => {
         + 'set Notifications to Allow, reload the page, then click Enable alerts again.');
     }
     if (permission !== 'granted') throw new Error('Notifications were not allowed. Click Enable alerts again and choose Allow.');
-    if (!monitorOnly) {
-      toast('Alerts are on: this page pops up a message when a print finishes or fails while it is open.');
-      return;
-    }
-    const registration = await withTimeout(navigator.serviceWorker.ready, 10000,
-      'The page is still starting. Reload it and try again.');
-    pushManager = registration.pushManager;
-    const base64 = pushKey.replace(/-/g, '+').replace(/_/g, '/');
-    const key = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    let subscription = await pushManager.getSubscription();
-    const madeFor = subscription?.options?.applicationServerKey;
-    if (subscription && madeFor && new Uint8Array(madeFor).join() !== key.join()) {
-      await subscription.unsubscribe();   // made for an older alert key: it would never deliver
-      subscription = null;
-    }
-    pushSubscription = subscription
-      || await withTimeout(pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }), 20000,
-        "The browser's notification service did not answer. Check your internet connection and try again.");
-    await postAlerts('/api/push');        // saving the same device again is harmless
-    pushRegistered = true;
-    await postAlerts('/api/push/test');
-    toast('Alerts are on for this device. A test alert was sent: it should pop up now. If it does not, '
-      + 'turn on notifications for this browser in your computer or phone settings, and turn off Do not disturb.');
+    toast('Alerts are on: this page pops up a message when a print finishes or fails while it is open. '
+      + 'For alerts on your phone when the app is closed, set up Phone notifications (ntfy) in Setup.');
   } catch (e) {
     toast(e.message || 'Could not set up alerts.', true);
   } finally {
@@ -970,32 +808,8 @@ async function pollEvents() {
 }
 
 // ---------------------------------------------------------------- start
-async function pollCloudPrinters() {
-  try {
-    const response = await fetch('/api/printers');
-    const list = await response.json().catch(() => null);
-    if (!response.ok || !Array.isArray(list)) throw new Error(list?.error || 'Reload and sign in to view your printers.');
-    if (JSON.stringify(list) !== JSON.stringify(printers)) {
-      for (const tile of tiles.values()) tile.stop();
-      tiles.clear();
-      printers = list;
-      render();
-    }
-    const full = list.map(p => tailnetUrl(p.remote)).find(Boolean);
-    $('tailnet').classList.toggle('hidden', !full);
-    if (full) $('tailnet').href = full.replace(/\/?$/, '/');
-  } catch (e) {
-    for (const tile of tiles.values()) tile.stop();
-    tiles.clear();
-    printers = [];
-    render();
-    notice(grid, e.message);
-  }
-  setTimeout(pollCloudPrinters, 8000);
-}
-
 function showUser() {
-  const who = monitorOnly ? (info.user || 'Cloud') : info.admin ? 'This PC (admin)' : (info.user || '');
+  const who = info.admin ? 'This PC (admin)' : (info.user || '');
   $('who').textContent = who;
   $('who').classList.toggle('hidden', !who);
   document.querySelectorAll('.admin-only').forEach(a => a.classList.toggle('hidden', !info.admin));
@@ -1007,24 +821,7 @@ async function start() {
     const me = await fetch('/api/me');
     info = await me.json();
     if (!me.ok) { notice(grid, info.error || 'Access denied'); return; }
-    monitorOnly = !!info.monitor_only;
     showUser();
-    if (monitorOnly) {
-      pushKey = info.push_key;
-      updateAlertsButton();
-      if (canNotify && pushKey && 'PushManager' in window) {
-        navigator.serviceWorker.ready.then(async registration => {
-          pushManager = registration.pushManager;
-          pushSubscription = await pushManager.getSubscription();
-          updateAlertsButton();
-        }).catch(() => {});
-      }
-      live.start();
-      route();
-      await pollCloudPrinters();
-      pollStatuses();
-      return;
-    }
     maxUploadMb = info.max_upload_mb || maxUploadMb;
     printers = await (await fetch('/api/printers')).json();
     render();

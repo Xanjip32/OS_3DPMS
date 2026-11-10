@@ -27,7 +27,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, bambu, cameras, cloud, config, discover, klipper, monitor, notify, tailscale, tsinstall
+from . import __version__, bambu, cameras, config, discover, klipper, monitor, notify, tailscale, tsinstall
 from .forward import Forwarder, local_or_tailnet
 from .tlspin import CertificateChanged, PinStore
 
@@ -122,7 +122,6 @@ class App:
         self.forwarders = []
         self.bambu_watchers = {}
         self.monitor = None
-        self.connector = None
         self.notifier = notify.Notifier(self)
         self.bambu_listener = discover.BambuListener()
         self.bambu_listener.callbacks.append(self._bambu_seen)
@@ -255,10 +254,8 @@ class App:
         }
         for field in config.NOTIFY_SECRETS:
             notifications["has_" + field] = bool(n.get(field) or n.get(field + "_protected"))
-        remote = self.cfg["cloud"]
         _, old = legacy_printers()
         return {"allowed_users": self.cfg["allowed_users"], "printers": printers,
-                "cloud": {"url": remote.get("url", ""), "has_key": bool(remote)},
                 "notifications": notifications, "channels": self.notifier.channels(),
                 "legacy": [{"name": str(p.get("name") or p.get("id") or p["host"]), "host": p["host"]}
                            for p in old]}
@@ -348,7 +345,7 @@ class App:
             self.cfg = dict(self.cfg, notifications=cfg["notifications"])
 
     def apply_setup(self, payload):
-        if not isinstance(payload, dict) or not {"printers", "allowed_users", "cloud"}.intersection(payload):
+        if not isinstance(payload, dict) or not {"printers", "allowed_users"}.intersection(payload):
             raise config.ConfigError("bad request")
         raw = config.read_raw(self.config_path)
         if "printers" in payload:
@@ -373,21 +370,13 @@ class App:
             raw["printers"] = printers
         if "allowed_users" in payload:
             raw["allowed_users"] = payload["allowed_users"]
-        if "cloud" in payload:
-            remote = payload["cloud"]
-            if not isinstance(remote, dict):
-                raise config.ConfigError("bad cloud settings")
-            url = str(remote.get("url") or "").strip().rstrip("/").lower()
-            key = str(remote.get("key") or "").strip()
-            previous = raw.get("cloud", {})
-            raw["cloud"] = previous if url == previous.get("url") and not key else {"url": url, "key": key}
         cfg = config.validate(raw)
         config.protect_secrets(cfg)
         config.save(self.config_path, cfg)
         if "printers" in payload:
             self.reload()
         else:
-            self.cfg = dict(self.cfg, allowed_users=cfg["allowed_users"], cloud=cfg["cloud"])
+            self.cfg = dict(self.cfg, allowed_users=cfg["allowed_users"])
 
 
 class LimitedServer(ThreadingHTTPServer):
@@ -768,7 +757,6 @@ class Handler(BaseHTTPRequestHandler):
         dns = ts.get("dns_name", "")
         self.send_json(200, {
             "tailscale": ts,
-            "cloud": self.app.connector.status() if self.app.connector else {},
             "install": dict(tsinstall.state(), supported=tsinstall.supported()),
             "published": published,
             "public_url": "https://%s/" % dns if dns else "",
@@ -1015,8 +1003,6 @@ def main(argv=None):
     atexit.register(lambda: os.path.exists(pid_file) and os.remove(pid_file))
 
     threading.Thread(target=admin.serve_forever, daemon=True).start()
-    app.connector = cloud.Connector(app)
-    app.connector.start()
     setup_url = "http://127.0.0.1:%d/setup" % app.cfg["admin_port"]
     log.info("OS_3DPMS %s running. Setup on this PC: %s", __version__, setup_url)
     if args.open_setup:
