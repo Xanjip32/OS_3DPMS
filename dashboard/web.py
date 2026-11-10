@@ -27,7 +27,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, bambu, cameras, config, discover, klipper, monitor, notify, tailscale, tsinstall
+from . import __version__, bambu, cameras, config, discover, klipper, monitor, notify, qr, tailscale, tsinstall
 from .forward import Forwarder, local_or_tailnet
 from .tlspin import CertificateChanged, PinStore
 
@@ -555,6 +555,8 @@ class Handler(BaseHTTPRequestHandler):
                     after = 0
                 events, last = app.monitor.events_after(after)
                 return self.send_json(200, {"events": events[-50:], "last": last})
+            if self.admin and path == "/api/setup/qr.svg":
+                return self.send_qr()
             if self.admin and path == "/api/setup/status":
                 return self.send_setup_status()
             if self.admin and path == "/api/setup/config":
@@ -748,6 +750,18 @@ class Handler(BaseHTTPRequestHandler):
             last = ts
             self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n"
                              % len(frame) + frame + b"\r\n")
+
+    def send_qr(self):
+        """QR code of the Tailscale dashboard link, for phones to scan from the Setup page."""
+        dns = tailscale.status().get("dns_name", "")
+        if not dns:
+            return self.send_json(404, {"error": "Tailscale has no address for this PC yet"})
+        data = qr.svg("https://%s/" % dns).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def send_setup_status(self):
         ts = tailscale.status()

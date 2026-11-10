@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Setup shows a QR code of the Tailscale dashboard link: scan it with a phone camera to open the
+  dashboard, then choose Install app. Made on the PC (no QR web service sees the link)
 - Removed the Cloudflare cloud dashboard. Tailscale is the one way in from outside: faster,
   private, and nothing on the public internet. Phone alerts while the app is closed use ntfy,
   Discord or Telegram (Setup → Phone notifications). An old Cloudflare key in `config.json` is

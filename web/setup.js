@@ -170,11 +170,14 @@ function renderPublish(st) {
       el('p', { text: 'Dashboard link' }),
       el('a', { class: 'url', href: st.public_url, text: st.public_url }),
       el('div', { class: 'actions' }, copy),
+      el('img', { class: 'qr', src: `/api/setup/qr.svg?u=${encodeURIComponent(st.public_url)}`, width: '176', height: '176',
+        alt: `QR code that opens ${st.public_url}` }),
       el('p', { text: 'On your phone or laptop:' }),
       el('ol', {},
         el('li', {}, 'Install Tailscale: ', link('https://tailscale.com/download', 'tailscale.com/download')),
         el('li', { text: `Sign in as ${st.tailscale.user || 'the same account as this PC'}. It then runs in the background.` }),
-        el('li', { text: 'Open the dashboard link above and choose Install app. Mainsail opens from each printer.' })));
+        el('li', { text: 'Scan the QR code with the phone camera (or open the link above), then choose Install app. '
+          + 'Mainsail opens from each printer.' })));
   } else {
     delete done.dataset.url;
     done.replaceChildren();

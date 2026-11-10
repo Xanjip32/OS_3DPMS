@@ -273,3 +273,4 @@ ul.ports { margin: 6px 0; padding-left: 18px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   .view .open, .progress > div { transition: none; }
 }
+.qr { display: block; margin: 10px 0 4px; border-radius: 6px; }
