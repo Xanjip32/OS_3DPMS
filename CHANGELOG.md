@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0-preview.2 (2026-11-10)
 
 - Setup shows a QR code of the Tailscale dashboard link: scan it with a phone camera to open the
   dashboard, then choose Install app. Made on the PC (no QR web service sees the link)
