@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Remote access: Tailscale has its own step in Setup, opened until it is done, with the steps for
+  your phone or laptop once the dashboard is published. The cloud dashboard shows **Full
+  dashboard** and per-printer **Mainsail** buttons that open the Tailscale pages (only real
+  `*.ts.net` links are used)
 - Queue page: add files to a printer's queue from the Files page; when the printer is free, its
   next job shows **Bed is clear, start**. Jobs run in order, nothing starts by itself, and the
   queue survives restarts

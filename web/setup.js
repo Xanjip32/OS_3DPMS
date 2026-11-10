@@ -2,6 +2,7 @@
 
 const $ = id => document.getElementById(id);
 let tsRunning = false;
+let tailscaleCardShown = false;
 let printers = [];
 let cloudUrl = '';
 const editedPrinters = new WeakSet();
@@ -162,8 +163,12 @@ function renderPublish(st) {
     ports.append(el('li', { text: `${ok ? '✓' : '✗'} ${what}` }));
   }
   const allPublished = entries.length > 0 && entries.every(([, ok]) => ok);
-  setState('pub-state', allPublished ? 'Published' : 'Local only', allPublished ? 'ok' : '');
+  setState('pub-state', allPublished ? 'Ready' : 'Not set up', allPublished ? 'ok' : 'todo');
   $('publish').disabled = !tsRunning;
+  if (!tailscaleCardShown) {   // first look at the page: open this step until it is done
+    tailscaleCardShown = true;
+    $('tailscale-card').open = !allPublished;
+  }
 
   const done = $('done-body');
   if (tsRunning && allPublished && st.public_url) {
@@ -173,7 +178,12 @@ function renderPublish(st) {
     done.replaceChildren(
       el('p', { text: 'Dashboard link' }),
       el('a', { class: 'url', href: st.public_url, text: st.public_url }),
-      el('div', { class: 'actions' }, copy));
+      el('div', { class: 'actions' }, copy),
+      el('p', { text: 'On your phone or laptop:' }),
+      el('ol', {},
+        el('li', {}, 'Install Tailscale: ', link('https://tailscale.com/download', 'tailscale.com/download')),
+        el('li', { text: `Sign in as ${st.tailscale.user || 'the same account as this PC'}. It then runs in the background.` }),
+        el('li', { text: 'Open the dashboard link above and choose Install app. Mainsail opens from each printer.' })));
   } else {
     delete done.dataset.url;
     done.replaceChildren();

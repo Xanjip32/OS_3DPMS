@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from . import config, wsclient
+from . import config, tailscale, wsclient
 from .notify import USER_AGENT
 
 log = logging.getLogger("dashboard.cloud")
@@ -147,6 +147,21 @@ class Connector:
         self.last_ok = 0
         self.detail = ""
         self.cameras = CameraLink(self)
+        self._remote, self._remote_at = ("", set()), -60.0
+
+    def remote(self):
+        """(https://<this PC>.ts.net, published ports) when the dashboard is on Tailscale, else ("", set()).
+        The cloud page links there; checked once a minute because it runs the Tailscale command."""
+        if time.monotonic() - self._remote_at >= 60:
+            self._remote_at = time.monotonic()
+            try:
+                st = tailscale.status()
+                ports = set(tailscale.serve_targets()) if st.get("state") == "Running" and st.get("dns_name") else set()
+                self._remote = ("https://" + st["dns_name"], ports) if 443 in ports else ("", set())
+            except Exception as error:  # the status report must go out anyway
+                log.info("Tailscale status for the cloud page unavailable: %s", error)
+                self._remote = ("", set())
+        return self._remote
 
     def start(self):
         threading.Thread(target=self.run, daemon=True, name="cloud-connector").start()
@@ -189,12 +204,16 @@ class Connector:
             hubs = {p["id"]: app.hubs[p["id"]] for p in printers}
         status = app.monitor.status
         event_settings = app.cfg["notifications"]["events"]
+        base, ports = self.remote()
         report = {
             "session": self.session,
             "printers": [
                 dict({k: p[k] for k in ("id", "name", "type", "rotate", "flip_horizontal", "flip_vertical")},
                      status={k: (status.get(p["id"]) or {}).get(k) for k in ("state", "progress")},
-                     camera_error=self.camera_error(hubs[p["id"]]))
+                     camera_error=self.camera_error(hubs[p["id"]]),
+                     # Tailscale addresses: they open only on the owner's own Tailscale devices.
+                     remote=base,
+                     mainsail="%s:%d/" % (base, p["ui_port"]) if base and p.get("ui_port") in ports else "")
                 for p in printers
             ],
             "events": [

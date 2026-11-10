@@ -10,8 +10,10 @@ enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a
 and confirm its camera appears. Setup and the dashboard work on that PC without
 a remote access account.
 
-**Remote access:** Use the [Cloudflare dashboard](cloud/README.md) for browser
-access and phone alerts, or use the optional Tailscale integration.
+**Remote access:** Tailscale (recommended) gives you the whole dashboard from your phone or
+laptop anywhere, privately and at full speed: cameras, Mainsail, Files and Queue. The optional
+[Cloudflare dashboard](cloud/README.md) adds a quick look from any browser and phone alerts; its
+**Full dashboard** and **Mainsail** buttons open the Tailscale pages on devices where Tailscale is on.
 
 Works with a mix of printers:
 
@@ -51,8 +53,10 @@ Works with a mix of printers:
    Bambu printers also need the LAN access code. Setup checks the printer and shows a camera
    preview as soon as it receives a frame. Click **Open live dashboard** to see your feeds.
 
-For optional Tailscale access, expand **Remote access** in Setup, install or connect Tailscale,
-and click **Publish dashboard**. Open the resulting link on a device connected to the same tailnet.
+For remote access, Setup opens **Remote access with Tailscale** until it is done: install
+Tailscale (one click), sign in, and click **Publish dashboard**. The first time, Tailscale may ask
+you to enable HTTPS ("Serve") for your tailnet; Setup shows the link. Then, on your phone or
+laptop, install the Tailscale app, sign in with the same account, and open the dashboard link.
 
 To stop: `stop.bat`. To remove: `uninstall.bat`.
 

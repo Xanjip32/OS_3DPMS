@@ -199,6 +199,24 @@ class CameraLinkTests(unittest.TestCase):
             connector.upload("link", "key", app.hubs, ["voron", "p1s"])
         self.assertEqual(calls, ["voron", "p1s"])
 
+    def test_report_links_mainsail_over_tailscale_only_when_published(self):
+        app = FakeApp("https://printers.account.workers.dev")
+        app.printers["voron"]["ui_port"] = 8101
+        connector = cloud.Connector(app)
+        running = {"state": "Running", "dns_name": "pc.tail1.ts.net"}
+        with mock.patch.object(cloud.tailscale, "status", return_value=running), \
+                mock.patch.object(cloud.tailscale, "serve_targets", return_value={443: "x", 8101: "y"}):
+            self.assertEqual(connector.remote(), ("https://pc.tail1.ts.net", {443, 8101}))
+        with mock.patch.object(connector, "request", return_value={"cameras": []}) as send, \
+                mock.patch.object(connector.cameras, "want"):
+            connector.sync(app.cfg["cloud"])
+        printer = json.loads(send.call_args.args[2])["printers"][0]
+        self.assertEqual((printer["remote"], printer["mainsail"]), ("https://pc.tail1.ts.net", "https://pc.tail1.ts.net:8101/"))
+        connector._remote_at = -60.0   # dashboard not published on Tailscale: no links
+        with mock.patch.object(cloud.tailscale, "status", return_value=running), \
+                mock.patch.object(cloud.tailscale, "serve_targets", return_value={}):
+            self.assertEqual(connector.remote(), ("", set()))
+
     def test_report_explains_a_camera_without_pictures(self):
         app = FakeApp("https://printers.account.workers.dev")
         hub = app.hubs["voron"]

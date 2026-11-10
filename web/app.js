@@ -51,8 +51,11 @@ function save(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* no storage */ }
 }
 
+// On the cloud dashboard, Mainsail and the full dashboard open over Tailscale (the owner's own devices only).
+const tailnetUrl = url => (/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net(:\d{1,5})?\/?$/i.test(url || '') ? url : '');
+
 function mainsailUrl(p) {
-  return `${location.protocol}//${location.hostname}:${p.ui_port}/`;
+  return monitorOnly ? tailnetUrl(p.mainsail) : `${location.protocol}//${location.hostname}:${p.ui_port}/`;
 }
 
 // Camera orientation from config: rotate (degrees), flip_horizontal, flip_vertical.
@@ -86,7 +89,7 @@ function chip(st) {
 }
 
 function canMainsail(p) {
-  return !monitorOnly && p.ui_port;
+  return monitorOnly ? !!tailnetUrl(p.mainsail) : !!p.ui_port;
 }
 
 // ---------------------------------------------------------------- cloud live link
@@ -947,6 +950,9 @@ async function pollCloudPrinters() {
       printers = list;
       render();
     }
+    const full = list.map(p => tailnetUrl(p.remote)).find(Boolean);
+    $('tailnet').classList.toggle('hidden', !full);
+    if (full) $('tailnet').href = full.replace(/\/?$/, '/');
   } catch (e) {
     for (const tile of tiles.values()) tile.stop();
     tiles.clear();

@@ -179,7 +179,7 @@ main.setup { max-width: 1120px; margin: 0 auto; padding: 30px 24px 48px; display
 .setup-intro h1 { margin: 0; font-size: clamp(28px, 4vw, 40px); font-weight: 750; letter-spacing: -.035em; line-height: 1.15; }
 .setup-intro p { margin: 8px 0 0; color: var(--muted); }
 .printers-card { grid-area: printers; }
-.remote-card { grid-area: remote; }
+.remote-stack { grid-area: remote; display: grid; gap: 18px; align-content: start; min-width: 0; }
 .notification-card { grid-area: notifications; }
 .card { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
 .card h2 { margin: 0 0 10px; font-size: 19px; letter-spacing: -.015em; display: flex; justify-content: space-between;
