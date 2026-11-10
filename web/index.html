@@ -82,12 +82,12 @@
 
   <!-- ------------------------------------------------------------ queue -->
   <section class="page" data-page="queue" hidden>
-    <div class="page-head"><h1>Queue</h1></div>
-    <div class="empty-card">
-      <strong>Print queue is coming next</strong>
-      <p>Line up jobs and OS_3DPMS sends the next one when a printer is free and you confirm the bed is clear.</p>
-      <p>For now: use <b>Send file</b> on a printer card on the Dashboard.</p>
+    <div class="page-head"><h1>Queue</h1><div class="counts" id="queue-count"></div></div>
+    <div class="toolbar">
+      <span class="muted">Jobs wait here in order for each printer. When a printer is free, check that its bed is
+        clear, then start its next job. Add jobs with <b>Add to queue</b> on the Files page.</span>
     </div>
+    <div class="table-wrap" id="queue"></div>
   </section>
 
   <!-- ------------------------------------------------------------ files -->

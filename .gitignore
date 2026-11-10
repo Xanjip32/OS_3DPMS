@@ -10,6 +10,8 @@ pins.json.tmp
 dashboard.pid
 tmp/
 files/
+queue.json
+queue.json.bad
 dev-data/
 dist/
 

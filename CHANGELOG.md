@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Queue page: add files to a printer's queue from the Files page; when the printer is free, its
+  next job shows **Bed is clear, start**. Jobs run in order, nothing starts by itself, and the
+  queue survives restarts
 - Files page: upload a G-code or 3MF file once, keep it on the printer PC, and send it to any
   printer (**Send** or **Send and print**, which asks you to check the bed first); delete files
   and see the free disk space

@@ -215,6 +215,37 @@ class DashboardTest(ServerFixture):
         self.assertEqual(os.listdir(self.app.files_dir), [])
         self.assertTrue(os.path.isfile(self.cfg_path))
 
+    # ---------------------------------------------------------------- print queue
+
+    def test_print_queue_runs_jobs_in_order_on_a_free_printer(self):
+        h = {"X-Dashboard": "1"}
+        app = self.app
+        self.request("POST", "/api/files?name=cube.gcode", b"G28\n", h)
+        self.addCleanup(os.remove, os.path.join(app.files_dir, "cube.gcode"))
+        for _ in range(2):
+            resp, data = self.request("POST", "/api/queue/add?name=cube.gcode&printer=voron", None, h)
+            self.assertEqual(resp.status, 200, data)
+        self.assertEqual(self.request("POST", "/api/queue/add?name=gone.gcode&printer=voron", None, h)[0].status, 404)
+        self.assertEqual(self.request("POST", "/api/queue/add?name=cube.gcode&printer=nope", None, h)[0].status, 404)
+        status = {"voron": {"state": "printing"}}
+        with mock.patch.object(app, "monitor", mock.Mock(status=status)):
+            jobs = json.loads(self.request("GET", "/api/queue")[1])["jobs"]
+            self.assertEqual([j["waiting"] for j in jobs], ["printer is printing", "the job before it goes first"])
+            self.assertEqual(self.request("POST", "/api/queue/start?id=" + jobs[0]["id"], None, h)[0].status, 409)
+            status["voron"] = {"state": "complete"}
+            resp, data = self.request("POST", "/api/queue/start?id=" + jobs[0]["id"], None, h)
+            self.assertEqual(resp.status, 200, data)
+            self.assertIn(b'name="print"', self.printer.uploads[-1])
+            jobs = json.loads(self.request("GET", "/api/queue")[1])["jobs"]
+            self.assertEqual([j["waiting"] for j in jobs], ["a job was just started there"])
+        self.assertEqual(app.load_queue(), app.queue)   # kept on disk
+        self.assertEqual(self.request("POST", "/api/queue/remove?id=" + jobs[0]["id"], None, h)[0].status, 200)
+        self.assertEqual(app.load_queue(), [])
+        with open(app.queue_path, "w") as f:
+            f.write("{not json")
+        self.assertEqual(app.load_queue(), [])          # a damaged queue is set aside, not lost
+        self.assertTrue(os.path.isfile(app.queue_path + ".bad"))
+
     # ---------------------------------------------------------------- cameras, status, forward
 
     def test_snapshot(self):

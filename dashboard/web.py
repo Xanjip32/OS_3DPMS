@@ -19,8 +19,10 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
+import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
@@ -43,6 +45,7 @@ PUBLIC_FILES = {
 }
 ADMIN_FILES = {"/setup": ("setup.html", HTML), "/setup.js": ("setup.js", JS)}
 UPLOAD_EXTENSIONS = (".gcode", ".gco", ".g", ".3mf")
+FREE_STATES = ("standby", "complete", "cancelled")  # a queued job may start (after the bed check)
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost"}
 MAX_JSON_BODY = 64 * 1024
 MAX_CONNECTIONS = 100
@@ -101,6 +104,9 @@ class App:
         os.makedirs(self.tmp_dir, exist_ok=True)
         self.files_dir = os.path.join(data_dir, "files")  # the Files page library; same disk as tmp_dir
         os.makedirs(self.files_dir, exist_ok=True)
+        self.queue_path = os.path.join(data_dir, "queue.json")
+        self.queue = self.load_queue()
+        self.queue_started = {}  # printer id -> when a queued job was started there
         for leftover in os.listdir(self.tmp_dir):
             try:
                 os.remove(os.path.join(self.tmp_dir, leftover))
@@ -123,6 +129,47 @@ class App:
         self.reload()
         self.monitor = monitor.Monitor(self)
         self.monitor.start()
+
+    # ---------------------------------------------------------------- print queue (Queue page)
+
+    def load_queue(self):
+        if not os.path.isfile(self.queue_path):
+            return []
+        try:
+            jobs = config.read_raw(self.queue_path).get("jobs") or []
+        except (OSError, config.ConfigError, AttributeError) as e:
+            log.warning("print queue not readable (%s); kept as queue.json.bad", e)
+            os.replace(self.queue_path, self.queue_path + ".bad")
+            return []
+        return [j for j in jobs if isinstance(j, dict) and isinstance(j.get("id"), str)
+                and isinstance(j.get("file"), str) and isinstance(j.get("printer"), str)]
+
+    def save_queue(self):
+        config.save(self.queue_path, {"jobs": self.queue})
+
+    def queue_view(self):
+        """Jobs in order, each with `ready` (it may start now) or `waiting` (why not).
+        Each printer runs its jobs in order, and only on a free printer: a person confirms the bed is clear."""
+        status = self.monitor.status if self.monitor else {}
+        seen, view = set(), []
+        for job in self.queue:
+            p = self.printers.get(job["printer"])
+            state = (status.get(job["printer"]) or {}).get("state")
+            if p is None:
+                why = "printer removed in setup"
+            elif job["printer"] in seen:
+                why = "the job before it goes first"
+            elif not os.path.isfile(os.path.join(self.files_dir, job["file"])):
+                why = "file deleted from Files"
+            elif time.time() - self.queue_started.get(job["printer"], 0) < 30:
+                why = "a job was just started there"  # its status needs a few seconds to show printing
+            elif state not in FREE_STATES:
+                why = "printer is %s" % (state or "not reporting its status")
+            else:
+                why = ""
+            seen.add(job["printer"])
+            view.append(dict(job, printer_name=p["name"] if p else job["printer"], ready=not why, waiting=why))
+        return view
 
     def reload(self):
         cfg = config.load(self.config_path)
@@ -503,6 +550,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_status(parts[2])
             if path == "/api/files":
                 return self.send_files()
+            if path == "/api/queue":
+                with app.lock:
+                    return self.send_json(200, {"jobs": app.queue_view()})
             if len(parts) == 2 and parts[0] in ("snap", "cam"):
                 hub = app.hubs.get(parts[1])
                 if hub is None:
@@ -539,6 +589,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.handle_upload(user, parts[2])
             if path in ("/api/files", "/api/files/send", "/api/files/delete"):
                 return self.handle_files(user, path)
+            if path in ("/api/queue/add", "/api/queue/remove", "/api/queue/start"):
+                return self.handle_queue(user, path)
             if self.admin and path == "/api/setup/config":
                 try:
                     payload = self.read_json()
@@ -775,11 +827,13 @@ class Handler(BaseHTTPRequestHandler):
             app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="ok")
             log.info("%s uploaded %s to %s", user, name, p["id"])
             self.send_json(200, {"ok": True, "message": msg})
+            return True
         except Exception as e:
             log.warning("upload to %s failed: %s", p["id"], e)
             app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="error",
                       error=str(e)[:200])
             self.send_json(502, {"ok": False, "error": str(e)[:300]})
+            return False
 
     def handle_upload(self, user, pid):
         app = self.app
@@ -841,6 +895,47 @@ class Handler(BaseHTTPRequestHandler):
             self.send_to_printer(user, p, target, name, self.query("print", "0") == "1")
         finally:
             lock.release()
+
+    def handle_queue(self, user, path):
+        app = self.app
+        if path == "/api/queue/add":
+            name = safe_filename(self.query("name"))
+            p = app.printers.get(self.query("printer"))
+            if not name.lower().endswith(UPLOAD_EXTENSIONS) or not os.path.isfile(os.path.join(app.files_dir, name)):
+                return self.send_json(404, {"ok": False, "error": "no such file in the library"})
+            if p is None:
+                return self.send_json(404, {"ok": False, "error": "unknown printer"})
+            with app.lock:
+                app.queue.append({"id": uuid.uuid4().hex[:12], "file": name, "printer": p["id"],
+                                  "added": int(time.time()), "by": user})
+                app.save_queue()
+            app.audit(user, "queue-add", file=name, printer=p["id"])
+            return self.send_json(200, {"ok": True, "message": "Queued %s for %s" % (name, p["name"])})
+        jid = self.query("id")
+        with app.lock:
+            job = next((j for j in app.queue_view() if j["id"] == jid), None)
+        if job is None:
+            return self.send_json(404, {"ok": False, "error": "no such job in the queue"})
+        if path == "/api/queue/start":
+            if not job["ready"]:
+                return self.send_json(409, {"ok": False, "error": "cannot start yet: " + job["waiting"]})
+            p = app.printers[job["printer"]]
+            lock = app.upload_locks.get(p["id"])
+            if lock is None or not lock.acquire(blocking=False):
+                return self.send_json(409, {"ok": False, "error": "another upload to this printer is running"})
+            try:
+                done = self.send_to_printer(user, p, os.path.join(app.files_dir, job["file"]), job["file"], True)
+            finally:
+                lock.release()
+            if not done:
+                return  # the job stays queued; the reply explained why
+            app.queue_started[p["id"]] = time.time()
+        with app.lock:
+            app.queue = [j for j in app.queue if j["id"] != jid]
+            app.save_queue()
+        app.audit(user, "queue-" + path.rsplit("/", 1)[1], file=job["file"], printer=job["printer"])
+        if path == "/api/queue/remove":
+            self.send_json(200, {"ok": True, "message": "Removed %s from the queue" % job["file"]})
 
 
 def make_handler(app, admin):

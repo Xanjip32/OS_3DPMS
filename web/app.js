@@ -588,8 +588,8 @@ async function renderFiles() {
   ], data.files));
 }
 
-// POST to the library API; returns [message, bad] for toast().
-async function filesPost(url) {
+// POST to a Files or Queue action; returns [message, bad] for toast().
+async function apiPost(url) {
   try {
     const r = await fetch(url, { method: 'POST', headers: { 'X-Dashboard': '1' } });
     const data = await r.json().catch(() => ({}));
@@ -608,17 +608,78 @@ function fileActions(f) {
     if (!p) return;
     if (start && !confirm(`Start printing ${f.name} on ${p.name}?\n\nCheck that the bed is clear first.`)) return;
     toast(`Sending ${f.name} to ${p.name}…`);
-    toast(...await filesPost(`/api/files/send?name=${name}&printer=${encodeURIComponent(p.id)}&print=${start ? 1 : 0}`));
+    toast(...await apiPost(`/api/files/send?name=${name}&printer=${encodeURIComponent(p.id)}&print=${start ? 1 : 0}`));
   };
   return el('div', { class: 'row-actions' }, pick,
     el('button', { class: 'primary', text: 'Send', onclick: () => send(false) }),
     el('button', { text: 'Send and print', onclick: () => send(true) }),
+    el('button', { text: 'Add to queue', onclick: async () => {
+      toast(...await apiPost(`/api/queue/add?name=${name}&printer=${encodeURIComponent(pick.value)}`));
+    } }),
     el('button', { text: 'Delete', onclick: async () => {
       if (!confirm(`Delete ${f.name} from the printer PC?`)) return;
-      toast(...await filesPost(`/api/files/delete?name=${name}`));
+      toast(...await apiPost(`/api/files/delete?name=${name}`));
       renderFiles();
     } }));
 }
+
+// ---------------------------------------------------------------- queue page (kept on the printer PC)
+const queueBox = $('queue');
+
+async function renderQueue() {
+  if (!('user' in info)) return;   // start() renders again once it knows where this page runs
+  if (monitorOnly) {
+    notice(queueBox, 'The print queue is kept on the printer PC. Open the dashboard on that PC or over Tailscale to use it.');
+    return;
+  }
+  let data;
+  try {
+    const r = await fetch('/api/queue');
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+  } catch (e) {
+    notice(queueBox, e.message || 'Cannot load the queue.');
+    return;
+  }
+  const n = data.jobs.length;
+  $('queue-count').textContent = n ? `${n} job${n === 1 ? '' : 's'}` : '';
+  if (!n) {
+    notice(queueBox, 'The queue is empty. Add jobs with "Add to queue" on the Files page.');
+    return;
+  }
+  queueBox.replaceChildren(table([
+    { label: '#', cell: j => String(data.jobs.indexOf(j) + 1) },
+    { label: 'File', cell: j => el('b', { text: j.file }) },
+    { label: 'Printer', cell: j => j.printer_name },
+    { label: 'Status', cell: j => el('span', { class: 'chip ' + (j.ready ? 'complete' : ''),
+      text: j.ready ? 'Ready' : `Waiting: ${j.waiting}` }) },
+    { label: 'Added', class: 'muted', cell: j => el('span', { text: new Date(j.added * 1000).toLocaleString(),
+      title: `Added by ${j.by}` }) },
+    { label: '', class: 'actions-col', cell: queueActions },
+  ], data.jobs));
+}
+
+function queueActions(j) {
+  const box = el('div', { class: 'row-actions' });
+  if (j.ready) {
+    box.append(el('button', { class: 'primary', text: 'Bed is clear, start', onclick: async () => {
+      if (!confirm(`Start printing ${j.file} on ${j.printer_name}?\n\nOnly if the bed is clear.`)) return;
+      toast(`Sending ${j.file} to ${j.printer_name}…`);
+      toast(...await apiPost(`/api/queue/start?id=${encodeURIComponent(j.id)}`));
+      renderQueue();
+    } }));
+  }
+  box.append(el('button', { text: 'Remove', onclick: async () => {
+    toast(...await apiPost(`/api/queue/remove?id=${encodeURIComponent(j.id)}`));
+    renderQueue();
+  } }));
+  return box;
+}
+
+// Printers finish and free up on their own: keep the open Queue page current.
+setInterval(() => {
+  if (!document.hidden && location.hash.replace(/^#\/?/, '') === 'queue') renderQueue();
+}, 5000);
 
 filesAdd.addEventListener('click', () => filesInput.click());
 filesInput.addEventListener('change', () => {
@@ -720,6 +781,7 @@ function route() {
   $('crumb').textContent = PAGES[page];
   document.title = `${PAGES[page]} · Printers`;
   if (page === 'files') renderFiles();
+  if (page === 'queue') renderQueue();
 }
 window.addEventListener('hashchange', route);
 

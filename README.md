@@ -26,6 +26,9 @@ Works with a mix of printers:
 - Files page: keep G-code and 3MF files on the printer PC (the `files` folder next to
   `config.json`) and send any of them to any printer, with or without starting the print. Shows
   the free disk space. Works on the PC and over Tailscale; the cloud dashboard only points there
+- Queue page: line up files per printer (**Add to queue** on the Files page). Each printer runs its
+  jobs in order; when it is free (standby, finished or cancelled), its next job shows **Bed is
+  clear, start**. Nothing starts by itself. The queue is kept in `queue.json` next to `config.json`
 - Print status and progress for Klipper and Bambu printers
 - Notifications when a print finishes, fails, pauses or a printer goes offline: pop-ups in the
   dashboard, and on your phone through ntfy, Discord or Telegram
