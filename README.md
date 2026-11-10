@@ -1,5 +1,7 @@
 # OS_3DPMS — Open Source 3D Printer Monitoring System
 
+<img src="assets/os3dpms-logo.png" alt="OS_3DPMS logo with a red and gray 3D printer toolhead" width="320">
+
 View your printer cameras and print status in one dashboard. Click a camera to
 enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a
 `.gcode` file onto a printer to send it and optionally start the print.
