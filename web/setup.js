@@ -293,7 +293,7 @@ function renderPrinters(checkIds = new Set()) {
         name: 'host', placeholder: '192.168.0.23', spellcheck: 'false', autocomplete: 'off',
       }))));
     const advanced = el('div', { class: 'field-grid' });
-    const row = el('div', { class: 'printer-row' },
+    const row = el('div', { class: 'printer-row', ...(p.id ? { id: `printer-${p.id}` } : {}) },
       el('div', { class: 'kind' }, el('span', { text: p.type === 'bambu' ? 'Bambu Lab' : 'Klipper / Mainsail' }),
         el('button', { class: 'quiet', text: 'Remove', onclick: () => { printers.splice(i, 1); renderPrinters(); renderFound(lastFound); } })),
       fields,
@@ -663,6 +663,14 @@ async function loadConfig() {
   renderPrinters();
   renderLegacy(cfg.legacy);
   renderNotifications(cfg.notifications, cfg.channels);
+  // Opened from Devices: #printer-<id> (Edit) or #printers (Add printer).
+  const hash = decodeURIComponent(location.hash.slice(1));
+  const card = hash === 'printers' ? document.querySelector('.printers-card')
+    : hash.startsWith('printer-') ? document.getElementById(hash) : null;
+  if (card) {
+    card.scrollIntoView({ block: 'center' });
+    (hash === 'printers' ? $('discover') : card.querySelector('input'))?.focus();
+  }
 }
 
 loadConfig().catch(e => { $('save-msg').textContent = e.message; });

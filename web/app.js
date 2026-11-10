@@ -496,6 +496,37 @@ function renderCounts() {
   $('device-counts').replaceChildren(item(printers.length, printers.length === 1 ? 'printer' : 'printers', 'idle'));
 }
 
+// Devices page: Edit and Remove only on the printer PC itself, where printer settings are managed.
+function deviceActions(p) {
+  const box = actionButtons(p, false);
+  if (!info.admin) return box;
+  box.append(
+    el('a', { class: 'btn', href: `/setup#printer-${encodeURIComponent(p.id)}`, text: 'Edit' }),
+    el('button', { text: 'Remove', onclick: () => removePrinter(p) }));
+  return box;
+}
+
+async function removePrinter(p) {
+  if (!confirm(`Remove ${p.name} from OS_3DPMS?\n\nThe printer itself is not changed. You can add it again in Setup.`)) return;
+  try {
+    const cfg = await (await fetch('/api/setup/config')).json();
+    // Saved access codes and API keys stay on the PC: the page never has them, so leave their markers out.
+    const rest = cfg.printers.filter(x => x.id !== p.id).map(({ has_access_code, has_api_key, ...x }) => x);
+    const r = await fetch('/api/setup/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
+      body: JSON.stringify({ printers: rest }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    printers = await (await fetch('/api/printers')).json();
+    render();
+    toast(`Removed ${p.name}`);
+  } catch (e) {
+    toast(`${p.name} was not removed: ${e.message}`, true);
+  }
+}
+
 function actionButtons(p, withSend) {
   const box = el('div', { class: 'row-actions' });
   box.append(el('button', { text: 'Camera', onclick: () => openModal(p) }));
@@ -553,7 +584,7 @@ function renderDevices() {
     { label: 'Status', cell: p => chip(statuses.get(p.id)) },
     { label: 'Progress', cell: progressCell },
     { label: 'Camera', class: 'muted', cell: p => (hiddenIds.has(p.id) ? 'Hidden on this device' : (p.rotate ? `Rotated ${p.rotate}°` : 'Shown')) },
-    { label: '', class: 'actions-col', cell: p => actionButtons(p, false) },
+    { label: '', class: 'actions-col', cell: deviceActions },
   ], rows));
 }
 

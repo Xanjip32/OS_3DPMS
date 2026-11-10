@@ -2,6 +2,8 @@
 
 ## 1.5.0-preview.1 (2026-11-10)
 
+- Devices page: **+ Add printer**, and **Edit** / **Remove** on each printer (on the printer PC).
+  Edit opens that printer in Setup; Remove asks first and leaves the printer itself unchanged
 - Remote access: Tailscale has its own step in Setup, opened until it is done, with the steps for
   your phone or laptop once the dashboard is published. The cloud dashboard shows **Full
   dashboard** and per-printer **Mainsail** buttons that open the Tailscale pages (only real
