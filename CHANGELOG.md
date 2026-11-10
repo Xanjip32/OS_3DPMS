@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0-preview.1 (2026-11-10)
 
 - Remote access: Tailscale has its own step in Setup, opened until it is done, with the steps for
   your phone or laptop once the dashboard is published. The cloud dashboard shows **Full

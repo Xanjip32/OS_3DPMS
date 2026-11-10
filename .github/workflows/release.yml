@@ -1,0 +1,74 @@
+name: Release
+
+# Push a tag like v1.5.0-preview.1 (matching dashboard/__init__.py) to build the Windows
+# package and publish it as a GitHub release with that version's CHANGELOG section as notes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      PYTHON: "3.14.10"   # Python's official embeddable build, bundled in runtime\
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the tag matches the app version
+        shell: bash
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' dashboard/__init__.py)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but dashboard/__init__.py says $v"; exit 1; }
+          awk -v h="## $v" 'index($0, h) == 1 {on = 1; next} on && /^## / {exit} on' CHANGELOG.md > changes.md
+          [ -s changes.md ] || { echo "::error::CHANGELOG.md has no '## $v' section"; exit 1; }
+          { echo "**Install (Windows 10/11, x64):** download OS_3DPMS-Windows-x64.zip, extract it to a"
+            echo "permanent folder (for example C:\\OS_3DPMS) on the PC that can reach your printers, and"
+            echo "double-click install.bat. Setup opens and guides you through printers and Tailscale."
+            echo "Python $PYTHON is included."
+            echo
+            echo "## What's new"
+            cat changes.md; } > notes.md
+
+      - name: Build the package (app + Python)
+        shell: pwsh
+        run: |
+          git archive --format=zip --output=app.zip --prefix=OS_3DPMS/ HEAD
+          Expand-Archive app.zip -DestinationPath out
+          Remove-Item -Recurse -Force out/OS_3DPMS/tests, out/OS_3DPMS/.github
+          Invoke-WebRequest "https://www.python.org/ftp/python/$env:PYTHON/python-$env:PYTHON-embed-amd64.zip" -OutFile python.zip
+          Expand-Archive python.zip -DestinationPath out/OS_3DPMS/runtime
+          # Only ship Python that carries the Python Software Foundation's valid code signature.
+          $sig = Get-AuthenticodeSignature out/OS_3DPMS/runtime/python.exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Python Software Foundation') {
+            throw "python.exe signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          Compress-Archive out/OS_3DPMS -DestinationPath OS_3DPMS-Windows-x64.zip
+
+      - name: Start the packaged app on a clean PC
+        shell: pwsh
+        run: |
+          Expand-Archive OS_3DPMS-Windows-x64.zip -DestinationPath smoke
+          $app = Resolve-Path smoke/OS_3DPMS
+          $proc = Start-Process "$app/runtime/python.exe" -ArgumentList "`"$app/run.py`"" -WorkingDirectory $app -PassThru
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep 1
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8079/setup -TimeoutSec 2
+              if ($r.StatusCode -eq 200 -and $r.Content -match 'Remote access with Tailscale') { $ok = $true; break }
+            } catch { }
+          }
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { Get-Content "$app/dashboard.log" -ErrorAction SilentlyContinue; throw "the packaged app did not serve Setup" }
+
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; *) pre= ;; esac   # v1.5.0-preview.1 is a preview
+          gh release create "$GITHUB_REF_NAME" OS_3DPMS-Windows-x64.zip $pre \
+            --title "OS_3DPMS ${GITHUB_REF_NAME#v}" --notes-file notes.md
