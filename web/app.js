@@ -170,10 +170,11 @@ const mimg = $('mimg');
 let modalPrinter = null;
 let modalTimer;
 
+let modalFrameAt = 0;
 const modalViewer = {
   get id() { return modalPrinter?.id; },
   wanted: () => !!modalPrinter && !document.hidden,
-  frame: blob => (modalPrinter ? drawInto(mimg, blob) : Promise.resolve()),
+  frame: blob => (modalPrinter ? drawInto(mimg, blob, () => { modalFrameAt = Date.now(); }) : Promise.resolve()),
   error: () => {},
 };
 
@@ -186,10 +187,10 @@ function openModal(p) {
     live.viewers.add(modalViewer);
     live.sync();
     const refresh = async () => {
-      if (!document.hidden && !live.open && modalPrinter === p) {
+      if (!document.hidden && Date.now() - modalFrameAt > 5000 && modalPrinter === p) {
         try {
           const r = await fetch(`/snap/${encodeURIComponent(p.id)}?t=${Date.now()}`, { cache: 'no-store' });
-          if (r.ok && modalPrinter === p) await drawInto(mimg, await r.blob());
+          if (r.ok && modalPrinter === p) await drawInto(mimg, await r.blob(), () => { modalFrameAt = Date.now(); });
         } catch (e) { /* keep the last picture */ }
       }
       if (modalPrinter === p) modalTimer = setTimeout(refresh, CLOUD_FRAME_MS);
@@ -302,7 +303,8 @@ function buildTile(p) {
 
   async function nextFrame() {
     if (stopped) return;
-    if (!onScreen() || (monitorOnly && live.open)) {
+    // While the live link delivers, it is enough; after 5 s without a picture, ask as well.
+    if (!onScreen() || (monitorOnly && live.open && Date.now() - lastFrame < 5000)) {
       setTimeout(nextFrame, 1000);
       return;
     }

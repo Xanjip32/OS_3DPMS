@@ -211,11 +211,15 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    // /connector/view and /connector/status let the printer PC check the live cameras end to end
+    // (it already holds all of this data, so its key may watch too).
     const connector = (path === '/connector' && (method === 'POST' || method === 'PUT'))
-      || (path === '/connector/live' && method === 'GET');
+      || (method === 'GET' && ['/connector/live', '/connector/view', '/connector/status'].includes(path));
     if (connector) {
       if (!await connectorAuthorized(request, env.CONNECTOR_KEY)) return json({ error: 'Invalid connection key.' }, 403);
-      if (path === '/connector/live' && !isWebSocket(request)) return json({ error: 'Expected a WebSocket.' }, 426);
+      if (path !== '/connector/status' && method === 'GET' && !isWebSocket(request)) {
+        return json({ error: 'Expected a WebSocket.' }, 426);
+      }
       return env.RELAY.getByName('host').fetch(request);
     }
     const asset = method === 'GET' && Object.hasOwn(assets, path) ? assets[path] : null;
@@ -299,7 +303,14 @@ export class PrinterRelay {
     const now = Date.now();
     // The Worker forwards these two addresses only for WebSocket upgrades it has already checked.
     if (path === '/connector/live') return this.openUplink();
-    if (path === '/live') return this.openViewer();
+    if (path === '/live' || path === '/connector/view') return this.openViewer();
+    if (path === '/connector/status') {
+      const ages = map => Object.fromEntries([...map].map(([id, value]) => [id, now - (value.time ?? value)]));
+      return json({
+        pc_report_age: now - this.lastSeen, uplink: !!this.uplink, wanted: this.wantedCameras(now),
+        viewers: [...this.viewers.values()].map(v => [...v.watch]), photo_age: ages(this.photos), snap_age: ages(this.demand),
+      });
+    }
     if (path === '/connector' && request.method === 'POST') {
       const body = await request.text();
       if (body.length > 64_000) return json({ error: 'Report too large.' }, 413);
@@ -392,6 +403,9 @@ export class PrinterRelay {
 
   openUplink() {
     const [client, server] = Object.values(new WebSocketPair());
+    // Since compatibility date 2026-03-17 binary messages arrive as Blob unless asked otherwise:
+    // without this every picture would read as empty and be dropped.
+    server.binaryType = 'arraybuffer';
     server.accept();
     const old = this.uplink;
     this.uplink = server;

@@ -143,7 +143,11 @@ class FakeSocket {
   addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
   send(data) { if (this.closed) throw new Error('closed'); this.sent.push(data); }
   close() { this.closed = true; }
-  emit(type, data) { for (const listener of this.listeners[type] || []) listener({ data }); }
+  emit(type, data) {
+    // Like Cloudflare (compatibility date 2026-03-17 and later): binary arrives as Blob unless binaryType says otherwise.
+    if (data instanceof ArrayBuffer && this.binaryType !== 'arraybuffer') data = new Blob([data]);
+    for (const listener of this.listeners[type] || []) listener({ data });
+  }
 }
 class UpgradeResponse extends Response {
   constructor(body, init = {}) {
@@ -194,6 +198,15 @@ test('live link: pictures go from the printer PC to the browsers that show that 
   browser.emit('close');
   assert.deepEqual(JSON.parse(uplink.sent.at(-1)), { cameras: ['voron'] });   // the /snap request above still counts
   assert.equal(relay.viewers.size, 0);
+
+  // The printer PC's key may check the chain: a status summary and a viewer link; nobody else may.
+  const pc = { Authorization: 'Bearer ' + key };
+  assert.equal((await fetch('/connector/status', {}, {})).status, 403);
+  assert.equal((await fetch('/connector/view', { headers: upgrade }, {})).status, 403);
+  const status = await (await fetch('/connector/status', { headers: pc }, {})).json();
+  assert.deepEqual([status.uplink, status.wanted, status.viewers], [true, ['voron'], []]);
+  assert.ok((await fetch('/connector/view', { headers: { ...upgrade, ...pc } }, {})).webSocket);
+  assert.equal(relay.viewers.size, 1);
 });
 
 test('live link: a camera error from the printer PC reaches the browser', async t => {

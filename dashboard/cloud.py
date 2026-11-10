@@ -88,11 +88,15 @@ class CameraLink:
             else:
                 failures = 0
                 self.live = True
+                log.info("live camera link open")
                 try:
                     self._stream(ws)
-                    return  # nobody watches any more; want() starts a new link when someone does
+                    log.info("live camera link closed: nobody is watching")
+                    return  # want() starts a new link when someone does
                 except (OSError, ValueError) as error:
-                    log.warning("live camera link dropped: %s", type(error).__name__)
+                    log.warning("live camera link dropped: %s %s", type(error).__name__, error)
+                except Exception:
+                    log.exception("live camera link failed")
                 finally:
                     self.live = False
                     ws.close()
