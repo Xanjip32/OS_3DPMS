@@ -25,4 +25,11 @@ jobs:
           python -m pip install ruff
           ruff check --select E9,F,B --target-version py38 .
       - name: Tests
-        run: python -m unittest discover -s tests -t . -v
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -t . -v 2>&1 | tee test.log || {
+            # Failing tests as annotations: they show on the run page without signing in.
+            grep -E "^(FAIL|ERROR):|^[A-Za-z.]*(Error|Exception)" test.log | head -10 | sed 's/^/::error::/'
+            exit 1
+          }
