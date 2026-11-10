@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -98,6 +99,8 @@ class App:
         self.data_dir = data_dir
         self.tmp_dir = os.path.join(data_dir, "tmp")
         os.makedirs(self.tmp_dir, exist_ok=True)
+        self.files_dir = os.path.join(data_dir, "files")  # the Files page library; same disk as tmp_dir
+        os.makedirs(self.files_dir, exist_ok=True)
         for leftover in os.listdir(self.tmp_dir):
             try:
                 os.remove(os.path.join(self.tmp_dir, leftover))
@@ -498,6 +501,8 @@ class Handler(BaseHTTPRequestHandler):
                 } for p in app.cfg["printers"]])
             if len(parts) == 3 and parts[:2] == ["api", "status"]:
                 return self.send_status(parts[2])
+            if path == "/api/files":
+                return self.send_files()
             if len(parts) == 2 and parts[0] in ("snap", "cam"):
                 hub = app.hubs.get(parts[1])
                 if hub is None:
@@ -532,6 +537,8 @@ class Handler(BaseHTTPRequestHandler):
             parts = [x for x in path.split("/") if x]
             if len(parts) == 3 and parts[:2] == ["api", "upload"]:
                 return self.handle_upload(user, parts[2])
+            if path in ("/api/files", "/api/files/send", "/api/files/delete"):
+                return self.handle_files(user, path)
             if self.admin and path == "/api/setup/config":
                 try:
                     payload = self.read_json()
@@ -716,32 +723,29 @@ class Handler(BaseHTTPRequestHandler):
             "printers": len(self.app.printers),
         })
 
-    def handle_upload(self, user, pid):
+    def query(self, key, default=""):
+        return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get(key, [default])[0]
+
+    def read_upload(self, name):
+        """Save the request body (a .gcode or .3mf file) to a temp file and return its path.
+        Returns None after sending the error reply."""
         app = self.app
-        p = app.printers.get(pid)
-        if p is None:
-            return self.send_json(404, {"ok": False, "error": "unknown printer"})
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        name = safe_filename(query.get("name", [""])[0])
-        start = query.get("print", ["0"])[0] == "1"
         if not name or not name.lower().endswith(UPLOAD_EXTENSIONS):
-            return self.send_json(400, {"ok": False, "error": "only .gcode or .3mf files"})
+            self.send_json(400, {"ok": False, "error": "only .gcode or .3mf files"})
+            return None
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
         if length <= 0:
-            return self.send_json(400, {"ok": False, "error": "empty file"})
+            self.send_json(400, {"ok": False, "error": "empty file"})
+            return None
         if length > app.cfg["max_upload_mb"] * 1024 * 1024:
             self.discard_body(length)
-            return self.send_json(413, {"ok": False, "error": "file larger than %d MB" % app.cfg["max_upload_mb"]})
-        lock = app.upload_locks.get(pid)
-        if lock is None or not lock.acquire(blocking=False):
-            return self.send_json(409, {"ok": False, "error": "another upload to this printer is running"})
-
-        tmp = None
+            self.send_json(413, {"ok": False, "error": "file larger than %d MB" % app.cfg["max_upload_mb"]})
+            return None
+        fd, tmp = tempfile.mkstemp(suffix=".upload", dir=app.tmp_dir)
         try:
-            fd, tmp = tempfile.mkstemp(suffix=".upload", dir=app.tmp_dir)
             with os.fdopen(fd, "wb") as f:
                 remaining = length
                 while remaining:
@@ -750,18 +754,47 @@ class Handler(BaseHTTPRequestHandler):
                         raise ConnectionError("upload interrupted")
                     f.write(chunk)
                     remaining -= len(chunk)
+        except BaseException as e:
+            os.remove(tmp)
+            if not isinstance(e, ConnectionError):
+                raise
+            log.warning("upload of %s interrupted", name)
+            self.send_json(400, {"ok": False, "error": "upload interrupted"})
+            return None
+        return tmp
+
+    def send_to_printer(self, user, p, path, name, start):
+        """Push a file on this PC to a printer and reply. The caller holds the printer's upload lock."""
+        app = self.app
+        size = os.path.getsize(path)
+        try:
             if p["type"] == "bambu":
-                msg = bambu.upload(p, tmp, name, start, app.pins)
+                msg = bambu.upload(p, path, name, start, app.pins)
             else:
-                msg = klipper.upload(p, tmp, name, start)
-            app.audit(user, "upload", printer=pid, file=name, bytes=length, start=start, result="ok")
-            log.info("%s uploaded %s to %s", user, name, pid)
+                msg = klipper.upload(p, path, name, start)
+            app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="ok")
+            log.info("%s uploaded %s to %s", user, name, p["id"])
             self.send_json(200, {"ok": True, "message": msg})
         except Exception as e:
-            log.warning("upload to %s failed: %s", pid, e)
-            app.audit(user, "upload", printer=pid, file=name, bytes=length, start=start, result="error",
+            log.warning("upload to %s failed: %s", p["id"], e)
+            app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="error",
                       error=str(e)[:200])
             self.send_json(502, {"ok": False, "error": str(e)[:300]})
+
+    def handle_upload(self, user, pid):
+        app = self.app
+        p = app.printers.get(pid)
+        if p is None:
+            return self.send_json(404, {"ok": False, "error": "unknown printer"})
+        lock = app.upload_locks.get(pid)
+        if lock is None or not lock.acquire(blocking=False):
+            return self.send_json(409, {"ok": False, "error": "another upload to this printer is running"})
+        tmp = None
+        try:
+            name = safe_filename(self.query("name"))
+            tmp = self.read_upload(name)
+            if tmp:
+                self.send_to_printer(user, p, tmp, name, self.query("print", "0") == "1")
         finally:
             lock.release()
             if tmp:
@@ -769,6 +802,45 @@ class Handler(BaseHTTPRequestHandler):
                     os.remove(tmp)
                 except OSError:
                     pass
+
+    # ------------------------------------------------------------ file library (Files page)
+
+    def send_files(self):
+        files = []
+        for entry in os.scandir(self.app.files_dir):
+            if entry.is_file() and entry.name.lower().endswith(UPLOAD_EXTENSIONS):
+                st = entry.stat()
+                files.append({"name": entry.name, "size": st.st_size, "modified": int(st.st_mtime)})
+        files.sort(key=lambda f: f["modified"], reverse=True)
+        self.send_json(200, {"files": files, "free": shutil.disk_usage(self.app.files_dir).free})
+
+    def handle_files(self, user, path):
+        app = self.app
+        name = safe_filename(self.query("name"))
+        if path == "/api/files":  # save the request body in the library (a file of the same name is replaced)
+            tmp = self.read_upload(name)
+            if tmp:
+                os.replace(tmp, os.path.join(app.files_dir, name))
+                app.audit(user, "file-saved", file=name, bytes=os.path.getsize(os.path.join(app.files_dir, name)))
+                self.send_json(200, {"ok": True, "message": "Saved %s" % name})
+            return
+        target = os.path.join(app.files_dir, name)
+        if not name.lower().endswith(UPLOAD_EXTENSIONS) or not os.path.isfile(target):
+            return self.send_json(404, {"ok": False, "error": "no such file in the library"})
+        if path == "/api/files/delete":
+            os.remove(target)
+            app.audit(user, "file-deleted", file=name)
+            return self.send_json(200, {"ok": True, "message": "Deleted %s" % name})
+        p = app.printers.get(self.query("printer"))
+        if p is None:
+            return self.send_json(404, {"ok": False, "error": "unknown printer"})
+        lock = app.upload_locks.get(p["id"])
+        if lock is None or not lock.acquire(blocking=False):
+            return self.send_json(409, {"ok": False, "error": "another upload to this printer is running"})
+        try:
+            self.send_to_printer(user, p, target, name, self.query("print", "0") == "1")
+        finally:
+            lock.release()
 
 
 def make_handler(app, admin):

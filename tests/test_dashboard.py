@@ -189,6 +189,32 @@ class DashboardTest(ServerFixture):
         finally:
             self.printer.state = "standby"
 
+    # ---------------------------------------------------------------- file library
+
+    def test_file_library_save_send_delete(self):
+        h = {"X-Dashboard": "1"}
+        resp, data = self.request("POST", "/api/files?name=..%2Fpart.gcode", b"G28\n", h)
+        self.assertEqual(resp.status, 200, data)
+        resp, data = self.request("GET", "/api/files")
+        listing = json.loads(data)
+        self.assertEqual([f["name"] for f in listing["files"]], ["part.gcode"])
+        self.assertGreater(listing["free"], 0)
+        before = len(self.printer.uploads)
+        resp, data = self.request("POST", "/api/files/send?name=part.gcode&printer=voron&print=0", None, h)
+        self.assertEqual(resp.status, 200, data)
+        self.assertEqual(len(self.printer.uploads), before + 1)
+        self.assertIn(b'filename="part.gcode"', self.printer.uploads[-1])
+        for path in ("/api/files/send?name=part.gcode&printer=nope", "/api/files/send?name=gone.gcode&printer=voron",
+                     "/api/files/delete?name=config.json"):   # only library G-code, never other files here
+            self.assertEqual(self.request("POST", path, None, h)[0].status, 404, path)
+        self.assertEqual(self.request("POST", "/api/files?name=run.exe", b"x", h)[0].status, 400)
+        resp, _ = self.request("POST", "/api/files?name=a.gcode", b"x", {**h, "Origin": "https://evil.example"})
+        self.assertEqual(resp.status, 403)
+        resp, data = self.request("POST", "/api/files/delete?name=part.gcode", None, h)
+        self.assertEqual(resp.status, 200, data)
+        self.assertEqual(os.listdir(self.app.files_dir), [])
+        self.assertTrue(os.path.isfile(self.cfg_path))
+
     # ---------------------------------------------------------------- cameras, status, forward
 
     def test_snapshot(self):
