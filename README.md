@@ -6,9 +6,9 @@ View your printer cameras and print status in one dashboard. Click a camera to
 enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a
 `.gcode` file onto a printer to send it and optionally start the print.
 
-**Current Windows preview:** Install OS_3DPMS on the printer-room PC, add a printer,
-and confirm its camera appears. Setup and the dashboard work on that PC without
-a remote access account.
+**Download:** the Windows package (Python included) is on the
+[Releases page](https://github.com/Xanjip32/OS_3DPMS/releases). Install it on the printer-room PC,
+add your printers, and the dashboard works on that PC right away, without any account.
 
 **Remote access:** Tailscale gives you the whole dashboard from your phone or laptop anywhere,
 privately and at full speed: cameras, Mainsail, Files and Queue. Nothing is opened to the public
@@ -32,6 +32,8 @@ Works with a mix of printers:
 - Queue page: line up files per printer (**Add to queue** on the Files page). Each printer runs its
   jobs in order; when it is free (standby, finished or cancelled), its next job shows **Bed is
   clear, start**. Nothing starts by itself. The queue is kept in `queue.json` next to `config.json`
+- Devices page: **+ Add printer**, and **Edit** / **Remove** on each printer (on the printer PC)
+- Remote access over Tailscale, set up from the setup page, with a QR code to open it on a phone
 - Print status and progress for Klipper and Bambu printers
 - Notifications when a print finishes, fails, pauses or a printer goes offline: pop-ups in the
   dashboard, and on your phone through ntfy, Discord or Telegram
@@ -42,8 +44,9 @@ Works with a mix of printers:
 
 ## Quick start (Windows)
 
-1. Extract the Windows ZIP on a PC that can reach the printers. Keep the extracted folder in a
-   permanent location, for example `C:\OS_3DPMS`.
+1. Download `OS_3DPMS-Windows-x64.zip` from the
+   [Releases page](https://github.com/Xanjip32/OS_3DPMS/releases) and extract it on a PC that can
+   reach the printers. Keep the extracted folder in a permanent location, for example `C:\OS_3DPMS`.
 2. Double-click **`install.bat`**. The Windows package includes Python. The source download
    can use an existing Python or install it with `winget`. The installer sets OS_3DPMS to start
    at login and opens [Setup](http://127.0.0.1:8079/setup).
@@ -51,11 +54,6 @@ Works with a mix of printers:
    and enter the printer IP. Then click **Save printers**.
    Bambu printers also need the LAN access code. Setup checks the printer and shows a camera
    preview as soon as it receives a frame. Click **Open live dashboard** to see your feeds.
-
-For remote access, Setup opens **Remote access with Tailscale** until it is done: install
-Tailscale (one click), sign in, and click **Publish dashboard**. The first time, Tailscale may ask
-you to enable HTTPS ("Serve") for your tailnet; Setup shows the link. Then, on your phone or
-laptop, install the Tailscale app, sign in with the same account, and open the dashboard link.
 
 To stop: `stop.bat`. To remove: `uninstall.bat`.
 
@@ -65,6 +63,22 @@ camera separately. That PC needs network access to the printer's local address. 
 enter the HTTP port used by the printer's Mainsail or Fluidd page if it differs from 80.
 For Bambu, the printer check tests reachability of its LAN port. The camera check needs
 a working feed and LAN access code for the built-in JPEG camera.
+
+### Remote access with Tailscale
+
+Setup opens **Remote access with Tailscale** until it is done:
+
+1. Click **Install Tailscale** (one click), then **Log in to Tailscale**.
+2. Click **Publish dashboard**. The first time, Tailscale may ask you to enable HTTPS ("Serve")
+   for your tailnet: Setup shows the link, then click Publish again.
+3. Setup shows your dashboard link, `https://<this-pc>.<your-tailnet>.ts.net/`, and a QR code.
+4. On your phone or laptop: install the [Tailscale app](https://tailscale.com/download), sign in
+   with the same account, then scan the QR code (or open the link) and choose **Install app**.
+
+Type the link exactly as Setup shows it: a dot after `.ts.net` breaks the secure connection.
+For a link that is easier to remember, rename the PC in Tailscale (admin console → Machines →
+*Edit machine name*, or `tailscale set --hostname=os3dpms`) and optionally your tailnet's name
+(admin console → DNS), then click **Publish dashboard** again.
 
 ### Install the Tailscale dashboard as an app (PC, iPhone, Android)
 
@@ -77,7 +91,8 @@ Every device needs the Tailscale app connected and signed in to the same account
 - **iPhone / iPad (Safari):** open the link in **Safari**, tap **Share** (square with arrow),
   then **Add to Home Screen** → **Add**. Other iPhone browsers cannot install it.
 
-If the app shows "Can't reach your printers", open Tailscale and connect.
+If the app shows "Can't reach your printers" or "site can't be reached", open Tailscale and
+connect. On iPhone, turn on **VPN On Demand** in the Tailscale app so it stays connected.
 
 ### Linux / macOS
 
@@ -117,7 +132,8 @@ HTTP MJPEG or JPEG snapshot from a camera bridge such as go2rtc.
 
 ## Notifications
 
-Set them up in step 4 of the setup page and click **Send test**.
+Set them up in **Phone notifications** on the setup page and click **Send test**. Tapping an
+alert opens your dashboard (over Tailscale).
 
 - **Dashboard pop-ups:** click **Enable alerts** at the top of the dashboard.
 - **ntfy** (free, no account): install the [ntfy app](https://ntfy.sh), click
@@ -177,6 +193,11 @@ web/         dashboard and setup pages (HTML/CSS/JS, no build step)
 tests/       unit and integration tests, fake printer
 scripts/     helper scripts used by the .bat files
 ```
+
+**Releases:** set `__version__` in `dashboard/__init__.py`, give `CHANGELOG.md` a matching
+`## <version>` section, and push a tag `v<version>`. GitHub Actions builds the Windows package
+(app + Python), starts it on a clean Windows machine, and publishes the release with that
+section as notes. Versions with a suffix such as `-preview.2` become pre-releases.
 
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
