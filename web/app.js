@@ -552,6 +552,105 @@ function renderDevices() {
   ], rows));
 }
 
+// ---------------------------------------------------------------- files page (library on the printer PC)
+const filesBox = $('files');
+const filesAdd = $('files-add');
+const filesInput = $('files-input');
+let fileNames = new Set();
+
+async function renderFiles() {
+  if (!('user' in info)) return;   // start() renders again once it knows where this page runs
+  if (monitorOnly) {
+    filesAdd.classList.add('hidden');
+    notice(filesBox, 'Files are kept on the printer PC. Open the dashboard on that PC or over Tailscale to upload and send them.');
+    return;
+  }
+  let data;
+  try {
+    const r = await fetch('/api/files');
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+  } catch (e) {
+    notice(filesBox, e.message || 'Cannot load the files.');
+    return;
+  }
+  fileNames = new Set(data.files.map(f => f.name));
+  $('files-free').textContent = `${(data.free / 1073741824).toFixed(1)} GB free on the printer PC`;
+  if (!data.files.length) {
+    notice(filesBox, 'No files yet. Upload a .gcode or .3mf file to keep it here and send it to any printer.');
+    return;
+  }
+  filesBox.replaceChildren(table([
+    { label: 'Name', cell: f => el('b', { text: f.name }) },
+    { label: 'Size', class: 'muted', cell: f => `${(f.size / 1048576).toFixed(1)} MB` },
+    { label: 'Added', class: 'muted', cell: f => new Date(f.modified * 1000).toLocaleString() },
+    { label: '', class: 'actions-col', cell: fileActions },
+  ], data.files));
+}
+
+// POST to the library API; returns [message, bad] for toast().
+async function filesPost(url) {
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'X-Dashboard': '1' } });
+    const data = await r.json().catch(() => ({}));
+    return r.ok && data.ok ? [data.message] : [data.error || `Failed (HTTP ${r.status})`, true];
+  } catch (e) {
+    return ['Lost connection to the dashboard', true];
+  }
+}
+
+function fileActions(f) {
+  const name = encodeURIComponent(f.name);
+  const pick = el('select', { 'aria-label': `Printer for ${f.name}` },
+    ...printers.map(p => el('option', { value: p.id, text: p.name })));
+  const send = async start => {
+    const p = printers.find(x => x.id === pick.value);
+    if (!p) return;
+    if (start && !confirm(`Start printing ${f.name} on ${p.name}?\n\nCheck that the bed is clear first.`)) return;
+    toast(`Sending ${f.name} to ${p.name}…`);
+    toast(...await filesPost(`/api/files/send?name=${name}&printer=${encodeURIComponent(p.id)}&print=${start ? 1 : 0}`));
+  };
+  return el('div', { class: 'row-actions' }, pick,
+    el('button', { class: 'primary', text: 'Send', onclick: () => send(false) }),
+    el('button', { text: 'Send and print', onclick: () => send(true) }),
+    el('button', { text: 'Delete', onclick: async () => {
+      if (!confirm(`Delete ${f.name} from the printer PC?`)) return;
+      toast(...await filesPost(`/api/files/delete?name=${name}`));
+      renderFiles();
+    } }));
+}
+
+filesAdd.addEventListener('click', () => filesInput.click());
+filesInput.addEventListener('change', () => {
+  const file = filesInput.files[0];
+  filesInput.value = '';
+  if (!file) return;
+  if (!UPLOAD_RE.test(file.name)) { toast('Only .gcode or .3mf files', true); return; }
+  if (file.size > maxUploadMb * 1048576) { toast(`File is larger than ${maxUploadMb} MB`, true); return; }
+  if (fileNames.has(file.name) && !confirm(`${file.name} is already in the library. Replace it?`)) return;
+  filesAdd.disabled = true;
+  const done = (msg, bad) => {
+    filesAdd.disabled = false;
+    filesAdd.textContent = '+ Upload file';
+    toast(msg, bad);
+    renderFiles();
+  };
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `/api/files?name=${encodeURIComponent(file.name)}`);
+  xhr.setRequestHeader('X-Dashboard', '1');
+  xhr.upload.addEventListener('progress', e => {
+    if (e.lengthComputable) filesAdd.textContent = `Uploading ${Math.round(e.loaded / e.total * 100)}%`;
+  });
+  xhr.addEventListener('load', () => {
+    let r = {};
+    try { r = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+    if (xhr.status === 200 && r.ok) done(r.message);
+    else done(r.error || `Upload failed (HTTP ${xhr.status})`, true);
+  });
+  xhr.addEventListener('error', () => done('Lost connection to the dashboard', true));
+  xhr.send(file);
+});
+
 // ---------------------------------------------------------------- hidden cameras menu
 const hiddenBtn = $('hidden-btn');
 const hiddenMenu = $('hidden-menu');
@@ -620,6 +719,7 @@ function route() {
   });
   $('crumb').textContent = PAGES[page];
   document.title = `${PAGES[page]} · Printers`;
+  if (page === 'files') renderFiles();
 }
 window.addEventListener('hashchange', route);
 
@@ -819,6 +919,7 @@ async function start() {
         }).catch(() => {});
       }
       live.start();
+      route();
       await pollCloudPrinters();
       pollStatuses();
       return;
@@ -826,6 +927,7 @@ async function start() {
     maxUploadMb = info.max_upload_mb || maxUploadMb;
     printers = await (await fetch('/api/printers')).json();
     render();
+    route();
     updateAlertsButton();
     pollStatuses();
     pollEvents();

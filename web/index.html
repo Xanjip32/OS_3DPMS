@@ -92,12 +92,14 @@
 
   <!-- ------------------------------------------------------------ files -->
   <section class="page" data-page="files" hidden>
-    <div class="page-head"><h1>Files</h1></div>
-    <div class="empty-card">
-      <strong>File library is coming next</strong>
-      <p>Upload a G-code file once, keep it on the printer PC, and send it to any printer.</p>
-      <p>For now: drag a file onto a printer card on the Dashboard.</p>
+    <div class="page-head"><h1>Files</h1><div class="counts" id="files-free"></div></div>
+    <div class="toolbar">
+      <span class="muted">Upload a G-code file once, keep it on the printer PC, and send it to any printer.</span>
+      <span class="grow"></span>
+      <button class="primary" id="files-add">+ Upload file</button>
+      <input type="file" id="files-input" accept=".gcode,.gco,.g,.3mf" hidden>
     </div>
+    <div class="table-wrap" id="files"></div>
   </section>
 
   <!-- ------------------------------------------------------------ settings -->

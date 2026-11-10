@@ -9,6 +9,7 @@ pins.json.tmp
 *.log.*
 dashboard.pid
 tmp/
+files/
 dev-data/
 dist/
 

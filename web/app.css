@@ -76,6 +76,7 @@ tbody tr:hover { background: #fafcfd; }
 td.muted { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .row-actions button { padding: 5px 10px; font-size: 13px; }
+.row-actions select { width: auto; padding: 4px 8px; font-size: 13px; }
 .progress-cell { display: inline-flex; align-items: center; gap: 8px; }
 .mini-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: #e6edf3; overflow: hidden; }
 .mini-bar span { display: block; height: 100%; background: var(--accent); }

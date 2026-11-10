@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Files page: upload a G-code or 3MF file once, keep it on the printer PC, and send it to any
+  printer (**Send** or **Send and print**, which asks you to check the bed first); delete files
+  and see the free disk space
 - Cloud cameras: live over WebSockets. The printer PC pushes each camera's newest picture
   (about one a second) while it is on screen, and the page gets it the moment it arrives. Before,
   each picture was a separate upload and download, which from far-away Cloudflare locations took
