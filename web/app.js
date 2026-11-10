@@ -1,6 +1,8 @@
 'use strict';
 
 const FRAME_MS = 200;               // grid refresh: about 5 frames per second per camera
+const CLOUD_FRAME_MS = 2000;        // cloud dashboard without its live link: one picture every 2 s
+const STALE_MS = 20000;             // keep showing the last picture this long before explaining the gap
 const STATUS_MS = 5000;
 const UPLOAD_RE = /\.(gcode|gco|g|3mf)$/i;
 const ACTIVE = new Set(['printing', 'paused']);
@@ -87,11 +89,93 @@ function canMainsail(p) {
   return !monitorOnly && p.ui_port;
 }
 
+// ---------------------------------------------------------------- cloud live link
+// On the cloud dashboard the printer PC pushes camera pictures over one WebSocket and this page
+// receives them over another, so a picture shows as soon as it exists. Each card or the big view
+// registers a viewer { id, wanted(), frame(blob) -> Promise, error(text) }. While the link is
+// down, they ask for one picture at a time instead.
+const live = {
+  socket: null,
+  open: false,
+  retry: 1000,
+  watching: '',
+  viewers: new Set(),
+  start() {
+    if (!monitorOnly || !('WebSocket' in window)) return;
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/live`);
+    ws.binaryType = 'arraybuffer';
+    this.socket = ws;
+    ws.onopen = () => { this.open = true; this.retry = 1000; this.watching = ''; this.sync(); };
+    ws.onmessage = e => this.receive(e.data);
+    ws.onclose = () => {
+      this.open = false;
+      this.socket = null;
+      setTimeout(() => this.start(), this.retry);
+      this.retry = Math.min(this.retry * 2, 30000);
+    };
+  },
+  // Tell the cloud which cameras are on screen now.
+  sync() {
+    if (!this.open) return;
+    const ids = [...new Set([...this.viewers].filter(v => v.wanted()).map(v => v.id))].sort();
+    const text = JSON.stringify({ watch: ids });
+    if (text !== this.watching) {
+      this.watching = text;
+      this.socket.send(text);
+    }
+  },
+  receive(data) {
+    if (typeof data === 'string') {
+      let message = null;
+      try { message = JSON.parse(data); } catch (e) { return; }
+      for (const v of this.viewers) if (v.id === message?.camera && message.error) v.error(message.error);
+      return;
+    }
+    const bytes = new Uint8Array(data);
+    const id = String.fromCharCode(...bytes.subarray(1, 1 + bytes[0]));
+    const blob = new Blob([bytes.subarray(1 + bytes[0])], { type: 'image/jpeg' });
+    const drawn = [...this.viewers].filter(v => v.id === id && v.wanted()).map(v => v.frame(blob));
+    // Ask for the next picture only when this one is on screen: a slow device skips pictures.
+    Promise.allSettled(drawn).then(() => {
+      if (this.open) this.socket.send(JSON.stringify({ ack: id }));
+    });
+  },
+};
+setInterval(() => { live.sync(); for (const v of live.viewers) v.tick?.(); }, 1000);
+
+// Show a JPEG blob in an <img>; resolves once it is drawn (or could not be).
+function drawInto(image, blob, onDrawn) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(blob);
+    image.onload = () => {
+      if (image.dataset.url) URL.revokeObjectURL(image.dataset.url);
+      image.dataset.url = url;
+      onDrawn?.();
+      resolve();
+    };
+    image.onerror = () => { URL.revokeObjectURL(url); resolve(); };   // damaged picture: wait for the next
+    image.src = url;
+  });
+}
+
+function clearImage(image) {
+  image.removeAttribute('src');
+  if (image.dataset.url) URL.revokeObjectURL(image.dataset.url);
+  delete image.dataset.url;
+}
+
 // ---------------------------------------------------------------- live view
 const modal = $('modal');
 const mimg = $('mimg');
 let modalPrinter = null;
 let modalTimer;
+
+const modalViewer = {
+  get id() { return modalPrinter?.id; },
+  wanted: () => !!modalPrinter && !document.hidden,
+  frame: blob => (modalPrinter ? drawInto(mimg, blob) : Promise.resolve()),
+  error: () => {},
+};
 
 function openModal(p) {
   modalPrinter = p;
@@ -99,9 +183,16 @@ function openModal(p) {
   $('mopen').classList.toggle('hidden', !canMainsail(p));
   mimg.style.transform = camTransform(p);
   if (monitorOnly) {
-    const refresh = () => {
-      if (!document.hidden) mimg.src = `/snap/${encodeURIComponent(p.id)}?t=${Date.now()}`;
-      modalTimer = setTimeout(refresh, 2500);
+    live.viewers.add(modalViewer);
+    live.sync();
+    const refresh = async () => {
+      if (!document.hidden && !live.open && modalPrinter === p) {
+        try {
+          const r = await fetch(`/snap/${encodeURIComponent(p.id)}?t=${Date.now()}`, { cache: 'no-store' });
+          if (r.ok && modalPrinter === p) await drawInto(mimg, await r.blob());
+        } catch (e) { /* keep the last picture */ }
+      }
+      if (modalPrinter === p) modalTimer = setTimeout(refresh, CLOUD_FRAME_MS);
     };
     refresh();
   } else {
@@ -112,8 +203,10 @@ function openModal(p) {
 function closeModal() {
   clearTimeout(modalTimer);
   modal.classList.remove('show');
-  mimg.removeAttribute('src');
+  clearImage(mimg);
   modalPrinter = null;
+  live.viewers.delete(modalViewer);
+  live.sync();
 }
 $('mclose').addEventListener('click', closeModal);
 $('mopen').addEventListener('click', () => window.open(mainsailUrl(modalPrinter), '_blank', 'noopener'));
@@ -152,8 +245,8 @@ function buildTile(p) {
   t.stop = () => {
     stopped = true;
     cameraObserver.unobserve(t);
-    img.removeAttribute('src');
-    if (frameUrl) URL.revokeObjectURL(frameUrl);
+    live.viewers.delete(viewer);
+    clearImage(img);
   };
   t.update = st => {
     chipEl.textContent = st && st.state ? stateText(st) : '';
@@ -171,13 +264,45 @@ function buildTile(p) {
 
   img.style.transform = camTransform(p);
 
-  // Camera: fetch snapshots while the card is on screen. Short requests keep connections free.
-  // fetch (not img.src) so the server's reason is shown when there is no picture.
-  let frameUrl = '';
+  // Camera: pictures while the card is on screen. On the cloud dashboard they come over the live
+  // link; otherwise (or while that link is down) the card fetches one picture at a time, with fetch
+  // (not img.src) so the server's reason is shown when there is none. A missed picture never
+  // blanks the card: the last one stays until no new picture came for STALE_MS.
+  let lastFrame = 0;
+  let waitingSince = 0;
+  let lastError = '';
+  const onScreen = () => !document.hidden && !modal.classList.contains('show')
+    && !(seenByObserver.has(t) && !visibleCameras.has(t));
+  const drawn = () => {
+    lastFrame = Date.now();
+    lastError = '';
+    t.classList.remove('nocam');
+  };
+  const show = blob => (stopped ? Promise.resolve() : drawInto(img, blob, drawn));
+  function explain(message) {
+    lastError = String(message || 'Camera offline').replace(/\.+$/, '');
+    if (Date.now() - lastFrame < STALE_MS) return;
+    nocam.textContent = `${lastError}. Retrying…`;
+    t.classList.add('nocam');
+  }
+  const viewer = {
+    id: p.id,
+    wanted: () => !stopped && onScreen(),
+    frame: show,
+    error: explain,
+    tick() {   // live link: notice when pictures stop coming
+      if (!live.open || !this.wanted()) { waitingSince = 0; return; }
+      waitingSince ||= Date.now();
+      if (Date.now() - Math.max(lastFrame, waitingSince) > STALE_MS) {
+        explain(lastError || 'No new picture from the printer PC for 20 seconds');
+      }
+    },
+  };
+  if (monitorOnly) live.viewers.add(viewer);
+
   async function nextFrame() {
     if (stopped) return;
-    const offscreen = seenByObserver.has(t) && !visibleCameras.has(t);
-    if (document.hidden || offscreen || modal.classList.contains('show')) {
+    if (!onScreen() || (monitorOnly && live.open)) {
       setTimeout(nextFrame, 1000);
       return;
     }
@@ -187,24 +312,16 @@ function buildTile(p) {
         const data = await r.json().catch(() => ({}));
         throw new Error(data.error || `Camera error (HTTP ${r.status})`);
       }
-      const blob = await r.blob();
-      if (stopped) return;
-      const url = URL.createObjectURL(blob);
-      img.onload = () => {
-        if (frameUrl) URL.revokeObjectURL(frameUrl);
-        frameUrl = url;
-        t.classList.remove('nocam');
-      };
-      img.onerror = () => URL.revokeObjectURL(url);   // damaged picture: wait for the next one
-      img.src = url;
-      setTimeout(nextFrame, monitorOnly ? 4000 : FRAME_MS);
+      await show(await r.blob());
+      setTimeout(nextFrame, monitorOnly ? CLOUD_FRAME_MS : FRAME_MS);
     } catch (e) {
       if (stopped) return;
-      t.classList.add('nocam');
-      nocam.textContent = `${e.message || 'Camera offline'}. Retrying…`;
-      setTimeout(nextFrame, 3000);
+      explain(e.message);
+      setTimeout(nextFrame, monitorOnly ? CLOUD_FRAME_MS : 3000);
     }
   }
+  nocam.textContent = 'Loading camera…';
+  t.classList.add('nocam');
   cameraObserver.observe(t);
   nextFrame();
 
@@ -524,37 +641,75 @@ async function pollStatuses() {
 const alertsBtn = $('alerts');
 const canNotify = 'Notification' in window && window.isSecureContext;
 function updateAlertsButton() {
+  // Stays visible when notifications are blocked, so a click can explain how to allow them.
   if (monitorOnly) {
-    alertsBtn.classList.toggle('hidden', !canNotify || !pushKey || !pushManager || Notification.permission === 'denied');
+    alertsBtn.classList.toggle('hidden', !canNotify || !pushKey || !('PushManager' in window));
     alertsBtn.textContent = pushRegistered ? 'Test alerts' : 'Enable alerts';
   } else {
-    alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission !== 'default');
+    alertsBtn.classList.toggle('hidden', !canNotify || Notification.permission === 'granted');
   }
   renderSettings();
 }
+
+const withTimeout = (promise, ms, message) => Promise.race([promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))]);
+
+async function postAlerts(path) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
+    body: JSON.stringify(pushSubscription),
+  });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.error || `Could not set up alerts (HTTP ${response.status}).`);
+  }
+}
+
 alertsBtn.addEventListener('click', async () => {
+  if (alertsBtn.disabled) return;
+  alertsBtn.disabled = true;
+  const label = alertsBtn.textContent;
+  alertsBtn.textContent = 'Setting up…';
   try {
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      toast('Choose "Allow" when the browser asks. No question? Click the bell or lock icon at the left of the address bar.');
+      permission = await Notification.requestPermission();
+    }
+    if (permission === 'denied') {
+      throw new Error('Notifications are blocked for this site. Click the lock icon at the left of the address bar, '
+        + 'set Notifications to Allow, reload the page, then click Enable alerts again.');
+    }
+    if (permission !== 'granted') throw new Error('Notifications were not allowed. Click Enable alerts again and choose Allow.');
     if (!monitorOnly) {
-      await Notification.requestPermission();
+      toast('Alerts are on: this page pops up a message when a print finishes or fails while it is open.');
       return;
     }
+    const registration = await withTimeout(navigator.serviceWorker.ready, 10000,
+      'The page is still starting. Reload it and try again.');
+    pushManager = registration.pushManager;
     const base64 = pushKey.replace(/-/g, '+').replace(/_/g, '/');
     const key = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-    pushSubscription ??= await pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-    const response = await fetch(pushRegistered ? '/api/push/test' : '/api/push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
-      body: JSON.stringify(pushSubscription),
-    });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      throw new Error(result.error || 'Could not set up alerts.');
+    let subscription = await pushManager.getSubscription();
+    const madeFor = subscription?.options?.applicationServerKey;
+    if (subscription && madeFor && new Uint8Array(madeFor).join() !== key.join()) {
+      await subscription.unsubscribe();   // made for an older alert key: it would never deliver
+      subscription = null;
     }
-    toast(pushRegistered ? 'Test alert sent.' : 'Alerts enabled on this device.');
+    pushSubscription = subscription
+      || await withTimeout(pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }), 20000,
+        "The browser's notification service did not answer. Check your internet connection and try again.");
+    await postAlerts('/api/push');        // saving the same device again is harmless
     pushRegistered = true;
+    await postAlerts('/api/push/test');
+    toast('Alerts are on for this device. A test alert was sent: it should pop up now. If it does not, '
+      + 'turn on notifications for this browser in your computer or phone settings, and turn off Do not disturb.');
   } catch (e) {
-    if (monitorOnly) toast(e.message || 'Could not set up alerts.', true);
+    toast(e.message || 'Could not set up alerts.', true);
   } finally {
+    alertsBtn.disabled = false;
+    alertsBtn.textContent = label;
     updateAlertsButton();
   }
 });
@@ -663,6 +818,7 @@ async function start() {
           updateAlertsButton();
         }).catch(() => {});
       }
+      live.start();
       await pollCloudPrinters();
       pollStatuses();
       return;

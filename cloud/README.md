@@ -56,15 +56,19 @@ can see your printers.
   The Worker accepts only a verified email that matches `OWNER_EMAIL`.
 - The session is an HMAC-signed, `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
   Page scripts cannot read it, and it cannot be forged without the client secret.
-- The printer host never uses Google. It connects to `/connector` with the
-  connection key.
+- The printer host never uses Google. It connects to `/connector` and
+  `/connector/live` with the connection key.
+- The browser's live camera link (`/live`) needs the same sign-in and must come
+  from the dashboard's own page (`Origin` check), so another website cannot open
+  it with the owner's cookie.
 
 ### Cloudflare Access (optional)
 
 If you already use Cloudflare Zero Trust, the Worker also accepts Access. Add a
 self-hosted application for the Worker hostname with an **Allow** policy for
-your email, a second application for the path `/connector` with a **Bypass**
-policy, and set the `ACCESS_AUD` secret to the main application's Audience tag.
+your email, a second application for the paths `/connector` and
+`/connector/live` with a **Bypass** policy, and set the `ACCESS_AUD` secret to the
+main application's Audience tag.
 
 ## Phone alerts
 
@@ -72,12 +76,28 @@ policy, and set the `ACCESS_AUD` secret to the main application's Audience tag.
   choose **Share → Add to Home Screen**, then open it from the Home Screen.
 - **Android**. Open it in Chrome and choose **Install app** or **Add to Home screen**.
 
-In the dashboard, tap **Enable alerts**, accept the notification prompt, then
-tap **Test alerts**. Choose which print events send alerts in **Setup → Phone
-notifications** on the printer PC.
+In the dashboard, tap **Enable alerts** and choose **Allow**. A test alert is sent
+right away. If the browser shows no question, click the bell or lock icon at the
+left of the address bar and allow notifications. Choose which print events send
+alerts in **Setup → Phone notifications** on the printer PC.
 
-The dashboard refreshes camera snapshots while you're viewing them. Cloudflare's
-free quotas apply. The host needs to remain online and able to reach the printers.
+## Live cameras
+
+While a camera card is on screen, the printer host sends that camera's newest
+picture over one WebSocket (`/connector/live`, with the connection key), about
+once a second, and the browser receives it over another (`/live`, signed in, same
+site only). The browser asks for the next picture only after drawing the last one,
+so a slow phone skips pictures instead of falling behind. A short gap keeps the
+last picture on screen. If a WebSocket cannot connect, both sides fall back to one
+request per picture.
+
+WebSockets also keep the request count low: messages on an open WebSocket count
+as a small fraction of a request, so Cloudflare's free quotas go much further than
+with one request per picture. The host needs to remain online and able to reach
+the printers.
+
+After `npm run deploy`, Cloudflare can keep the running relay on the old code for
+up to five minutes. Open live links then drop once and reconnect by themselves.
 
 - [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect)
 - [Cloudflare Durable Objects free quotas](https://developers.cloudflare.com/durable-objects/platform/pricing/)

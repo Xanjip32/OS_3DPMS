@@ -2,6 +2,10 @@ import { buildPushPayload } from '@block65/webcrypto-web-push';
 import assets from './assets.mjs';
 
 const idPattern = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const PHOTO_MS = 30_000;   // a camera picture is shown for up to 30 s while the next one is on its way
+const DEMAND_MS = 15_000;
+const MAX_VIEWERS = 20;
+const isWebSocket = request => request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
 const headers = {
   'Cache-Control': 'no-store',
   'X-Content-Type-Options': 'nosniff',
@@ -207,13 +211,18 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
-    if (path === '/connector' && (method === 'POST' || method === 'PUT')) {
+    const connector = (path === '/connector' && (method === 'POST' || method === 'PUT'))
+      || (path === '/connector/live' && method === 'GET');
+    if (connector) {
       if (!await connectorAuthorized(request, env.CONNECTOR_KEY)) return json({ error: 'Invalid connection key.' }, 403);
+      if (path === '/connector/live' && !isWebSocket(request)) return json({ error: 'Expected a WebSocket.' }, 426);
       return env.RELAY.getByName('host').fetch(request);
     }
     const asset = method === 'GET' && Object.hasOwn(assets, path) ? assets[path] : null;
+    // The page may open its live camera link (a WebSocket) to this same site.
+    const csp = path === '/' ? { 'Content-Security-Policy': `${headers['Content-Security-Policy']}; connect-src 'self' wss://${url.host}` } : {};
     const sendAsset = () => new Response(Uint8Array.from(atob(asset.base64), c => c.charCodeAt(0)),
-      { headers: { ...headers, 'Content-Type': asset.type } });
+      { headers: { ...headers, 'Content-Type': asset.type, ...csp } });
     if (method === 'GET' && path.startsWith('/auth/')) {
       if (path === '/auth/style.css') return new Response(LOGIN_CSS, { headers: { ...headers, 'Content-Type': 'text/css' } });
       if (!googleReady(env)) return page('Sign-in is not set up', 'Add the Google client ID and secret to the Worker.', '', 503);
@@ -238,6 +247,12 @@ export default {
         logout: googleReady(env) ? '/auth/logout' : '' });
     }
     if (method === 'GET' && (path === '/api/printers' || /^\/(snap|api\/status)\/[a-z0-9-]+$/.test(path))) {
+      return env.RELAY.getByName('host').fetch(request);
+    }
+    if (method === 'GET' && path === '/live') {
+      if (!isWebSocket(request)) return json({ error: 'Expected a WebSocket.' }, 426);
+      // Browsers send cookies with WebSockets from any site: only this dashboard's own page may connect.
+      if (request.headers.get('Origin') !== url.origin) return json({ error: 'Cross-site request blocked.' }, 403);
       return env.RELAY.getByName('host').fetch(request);
     }
     if (method === 'POST' && (path === '/api/push' || path === '/api/push/test')) {
@@ -268,8 +283,12 @@ export class PrinterRelay {
     this.ctx = ctx;
     this.env = cleanEnv(env);
     this.printers = new Map();
-    this.photos = new Map();
-    this.demand = new Map();
+    this.photos = new Map();          // printer id -> { packet, bytes, time }
+    this.demand = new Map();          // printer id -> last picture request over plain HTTP
+    this.cameraErrors = new Map();    // printer id -> why the printer PC has no picture
+    this.viewers = new Map();         // browser WebSocket -> { watch, busy, sent }
+    this.uplink = null;               // the printer PC's live WebSocket
+    this.lastWanted = '';
     this.lastSeen = 0;
     this.session = '';
   }
@@ -278,6 +297,9 @@ export class PrinterRelay {
     const url = new URL(request.url);
     const path = url.pathname;
     const now = Date.now();
+    // The Worker forwards these two addresses only for WebSocket upgrades it has already checked.
+    if (path === '/connector/live') return this.openUplink();
+    if (path === '/live') return this.openViewer();
     if (path === '/connector' && request.method === 'POST') {
       const body = await request.text();
       if (body.length > 64_000) return json({ error: 'Report too large.' }, 413);
@@ -291,46 +313,181 @@ export class PrinterRelay {
       this.session = report.session;
       this.lastSeen = now;
       for (const [id, time] of this.demand) {
-        if (now - time > 15_000 || !this.printers.has(id)) this.demand.delete(id);
+        if (now - time > DEMAND_MS || !this.printers.has(id)) this.demand.delete(id);
       }
       for (const [id, photo] of this.photos) {
-        if (now - photo.time > 10_000 || !this.printers.has(id)) this.photos.delete(id);
+        if (now - photo.time > PHOTO_MS || !this.printers.has(id)) this.photos.delete(id);
       }
+      this.cameraErrors = new Map([...this.printers.values()]
+        .filter(p => typeof p.camera_error === 'string' && p.camera_error)
+        .map(p => [p.id, p.camera_error.slice(0, 300)]));
+      for (const [ws, viewer] of this.viewers) {
+        for (const id of viewer.watch) this.explain(ws, id, now);
+      }
+      this.sendWanted();
       if (Array.isArray(report.events) && report.events.length) {
         await this.notify(report.session, report.events.slice(-20));
       }
-      return json({ cameras: [...this.demand.keys()].slice(0, 8) });
+      return json({ cameras: this.wantedCameras(now) });
     }
     if (path === '/connector' && request.method === 'PUT') {
       const id = url.searchParams.get('camera');
-      if (!this.printers.has(id) || now - (this.demand.get(id) || 0) > 15_000) {
+      if (!this.printers.has(id) || !this.wantedCameras(now).includes(id)) {
         return json({ error: 'Camera is not requested.' }, 409);
       }
       const bytes = new Uint8Array(await request.arrayBuffer());
       if (bytes.length > 1_000_000 || bytes[0] !== 255 || bytes[1] !== 216) {
         return json({ error: 'Expected a JPEG preview up to 1 MB.' }, 400);
       }
-      this.photos.set(id, { bytes, time: now });
+      const packet = new Uint8Array(1 + id.length + bytes.length);
+      packet[0] = id.length;
+      packet.set(new TextEncoder().encode(id), 1);
+      packet.set(bytes, 1 + id.length);
+      this.storePhoto(id, packet, now);
       return new Response(null, { status: 204, headers });
     }
     if (path.startsWith('/api/push')) return this.subscribe(request, path.endsWith('/test'));
     const online = now - this.lastSeen < 25_000;
     if (path === '/api/printers') {
       if (!online) return json({ error: 'Waiting for the printer PC to connect.' }, 503);
-      return json([...this.printers.values()].map(({ status, ...printer }) => printer));
+      return json([...this.printers.values()].map(({ status, camera_error, ...printer }) => printer));
     }
     const id = path.split('/').at(-1);
     if (path.startsWith('/api/status/')) {
       return json(online ? this.printers.get(id)?.status || {} : { state: 'offline' });
     }
     if (path.startsWith('/snap/') && online && this.printers.has(id)) {
+      const known = this.demand.has(id);
       this.demand.set(id, now);
+      if (!known) this.sendWanted();
       const photo = this.photos.get(id);
-      if (photo && now - photo.time < 10_000) {
+      if (photo && now - photo.time < PHOTO_MS) {
         return new Response(photo.bytes, { headers: { ...headers, 'Content-Type': 'image/jpeg' } });
       }
+      return json({ error: this.cameraErrors.get(id) || 'Waiting for a camera preview.' }, 503);
     }
-    return json({ error: 'Waiting for a camera preview.' }, 503);
+    return json({ error: online ? 'Waiting for a camera preview.' : 'The printer PC is not connected.' }, 503);
+  }
+
+  // ---------------------------------------------------------------- live camera link
+  // The printer PC keeps one WebSocket open while someone watches, and sends each new picture as
+  // [id length][id][JPEG]. Each browser gets the newest picture of the cameras it shows, one at a
+  // time: the next goes out when the browser says it has drawn the last ("ack"), so a slow phone
+  // skips pictures instead of falling behind.
+
+  wantedCameras(now) {
+    const ids = new Set();
+    for (const [id, time] of this.demand) if (now - time <= DEMAND_MS) ids.add(id);
+    for (const viewer of this.viewers.values()) for (const id of viewer.watch) ids.add(id);
+    return [...ids].filter(id => this.printers.has(id)).slice(0, 8);
+  }
+
+  sendWanted() {
+    if (!this.uplink) return;
+    const text = JSON.stringify({ cameras: this.wantedCameras(Date.now()) });
+    if (text === this.lastWanted) return;
+    this.lastWanted = text;
+    try { this.uplink.send(text); } catch { this.uplink = null; }
+  }
+
+  openUplink() {
+    const [client, server] = Object.values(new WebSocketPair());
+    server.accept();
+    const old = this.uplink;
+    this.uplink = server;
+    if (old) try { old.close(1000, 'Replaced by a newer connection.'); } catch { /* already closed */ }
+    server.addEventListener('message', event => this.onUplink(server, event.data));
+    const gone = () => {
+      if (this.uplink === server) this.uplink = null;
+      try { server.close(1000); } catch { /* already closed */ }
+    };
+    server.addEventListener('close', gone);
+    server.addEventListener('error', gone);
+    this.lastWanted = '';
+    this.sendWanted();
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  onUplink(ws, data) {
+    if (ws !== this.uplink || typeof data === 'string') return;   // text from the PC is only a keep-alive
+    const packet = new Uint8Array(data);
+    const length = packet[0];
+    const id = String.fromCharCode(...packet.subarray(1, 1 + length));
+    const photo = packet.subarray(1 + length);
+    const now = Date.now();
+    if (!idPattern.test(id) || !this.wantedCameras(now).includes(id)) return;
+    if (photo.length > 1_000_000 || photo[0] !== 255 || photo[1] !== 216) return;
+    this.storePhoto(id, packet, now);
+  }
+
+  storePhoto(id, packet, now) {
+    this.photoCount = (this.photoCount || 0) + 1;
+    this.photos.set(id, { packet, bytes: packet.subarray(1 + packet[0]), time: now, number: this.photoCount });
+    for (const [ws, viewer] of this.viewers) if (viewer.watch.has(id)) this.offer(ws, viewer, id);
+  }
+
+  offer(ws, viewer, id) {
+    const photo = this.photos.get(id);
+    if (!photo || viewer.sent.get(id) === photo.number) return;
+    const busy = viewer.busy.get(id);
+    if (busy && Date.now() - busy < 10_000) return;   // still drawing the last picture
+    try {
+      ws.send(photo.packet);
+      viewer.busy.set(id, Date.now());
+      viewer.sent.set(id, photo.number);
+    } catch {
+      this.dropViewer(ws);
+    }
+  }
+
+  // Tell a viewer why a camera has no picture, when the printer PC knows.
+  explain(ws, id, now) {
+    const error = this.cameraErrors.get(id);
+    const photo = this.photos.get(id);
+    if (!error || (photo && now - photo.time < PHOTO_MS)) return;
+    try { ws.send(JSON.stringify({ camera: id, error })); } catch { this.dropViewer(ws); }
+  }
+
+  openViewer() {
+    if (this.viewers.size >= MAX_VIEWERS) return json({ error: 'Too many dashboards are open.' }, 429);
+    const [client, server] = Object.values(new WebSocketPair());
+    server.accept();
+    const viewer = { watch: new Set(), busy: new Map(), sent: new Map() };
+    this.viewers.set(server, viewer);
+    server.addEventListener('message', event => this.onViewer(server, viewer, event.data));
+    const gone = () => this.dropViewer(server);
+    server.addEventListener('close', gone);
+    server.addEventListener('error', gone);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  onViewer(ws, viewer, data) {
+    if (typeof data !== 'string' || data.length > 4096) return;
+    let message;
+    try { message = JSON.parse(data); } catch { return; }
+    const now = Date.now();
+    if (Array.isArray(message?.watch)) {
+      const watch = new Set(message.watch.filter(id => typeof id === 'string' && idPattern.test(id)).slice(0, 32));
+      for (const id of watch) {
+        if (viewer.watch.has(id)) continue;
+        viewer.busy.delete(id);   // a new card: send it the newest picture at once
+        viewer.sent.delete(id);
+      }
+      viewer.watch = watch;
+      for (const id of watch) {
+        this.offer(ws, viewer, id);
+        this.explain(ws, id, now);
+      }
+      this.sendWanted();
+    } else if (typeof message?.ack === 'string') {
+      viewer.busy.delete(message.ack);
+      if (viewer.watch.has(message.ack)) this.offer(ws, viewer, message.ack);
+    }
+  }
+
+  dropViewer(ws) {
+    if (this.viewers.delete(ws)) this.sendWanted();
+    try { ws.close(1000); } catch { /* already closed */ }
   }
 
   async subscribe(request, test) {

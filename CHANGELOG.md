@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Cloud cameras: live over WebSockets. The printer PC pushes each camera's newest picture
+  (about one a second) while it is on screen, and the page gets it the moment it arrives. Before,
+  each picture was a separate upload and download, which from far-away Cloudflare locations took
+  1 to 7 seconds and blanked every camera when one upload was slow. Falls back to one request
+  per picture when a WebSocket cannot connect
+- Cameras keep the last picture through short gaps, and explain only when pictures stopped for
+  20 seconds; the cloud dashboard shows the printer PC's reason (for example HTTP 500 from the
+  camera service) instead of "Waiting for a camera preview"
+- Cloud uploads: one slow camera no longer cancels the other cameras' pictures; requests to
+  Cloudflare wait up to 10 seconds instead of 4
+- Alerts: **Enable alerts** asks for notification permission itself, says what is happening,
+  explains blocked notifications, replaces a subscription made for an older alert key, and
+  sends a test alert straight away
 - Security: the dashboard and Mainsail forwards refuse requests for other website names, so a
   malicious page cannot use a browser on the printer PC to upload or start prints (DNS rebinding)
 - Security: printer redirects are followed only on the same printer (the API key never leaves it),

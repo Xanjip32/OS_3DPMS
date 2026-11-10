@@ -27,7 +27,7 @@ function fixture(vars = {}) {
     headers: { Authorization: 'Bearer ' + key },
     body: JSON.stringify({ session, events, printers: [{ id: 'voron', name: 'Voron', status: { state: 'printing' } }] }),
   }, {});
-  return { fetch, report, pending };
+  return { fetch, report, pending, relay };
 }
 
 test('private viewer can request a photo, but only the paired host can publish one', async () => {
@@ -134,4 +134,82 @@ test('an opted-in phone receives a test and one encrypted alert for a print even
   await report([event]);
   await Promise.all(pending);
   assert.equal(push.mock.callCount(), 2);
+});
+
+// Node has no WebSocketPair and refuses status 101: stand-ins with just what the relay uses.
+class FakeSocket {
+  constructor() { this.listeners = {}; this.sent = []; this.closed = false; }
+  accept() { this.accepted = true; }
+  addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
+  send(data) { if (this.closed) throw new Error('closed'); this.sent.push(data); }
+  close() { this.closed = true; }
+  emit(type, data) { for (const listener of this.listeners[type] || []) listener({ data }); }
+}
+class UpgradeResponse extends Response {
+  constructor(body, init = {}) {
+    super(body, init.status === 101 ? { ...init, status: 200 } : init);
+    if (init.status === 101) this.webSocket = init.webSocket;
+  }
+}
+
+test('live link: pictures go from the printer PC to the browsers that show that camera', async t => {
+  globalThis.WebSocketPair = class { constructor() { this[0] = new FakeSocket(); this[1] = new FakeSocket(); } };
+  t.mock.property(globalThis, 'Response', UpgradeResponse);
+  t.after(() => { delete globalThis.WebSocketPair; });
+  const { fetch, report, relay } = fixture();
+  const upgrade = { Upgrade: 'websocket' };
+  await report();
+
+  // Only the paired PC opens the uplink; only this dashboard's own page opens a viewer link.
+  assert.equal((await fetch('/connector/live', { headers: upgrade }, {})).status, 403);
+  assert.equal((await fetch('/connector/live', { headers: { Authorization: 'Bearer ' + key } }, {})).status, 426);
+  assert.equal((await fetch('/live', { headers: upgrade }, {})).status, 403);
+  assert.equal((await fetch('/live', { headers: { ...upgrade, Origin: 'https://evil.example' } })).status, 403);
+  assert.equal((await fetch('/live', { headers: { ...upgrade, Origin: base } }, {})).status, 403);   // not signed in
+
+  const up = await fetch('/connector/live', { headers: { ...upgrade, Authorization: 'Bearer ' + key } }, {});
+  assert.ok(up.webSocket);
+  const uplink = relay.uplink;
+  assert.deepEqual(JSON.parse(uplink.sent.at(-1)), { cameras: [] });
+  const view = await fetch('/live', { headers: { ...upgrade, Origin: base } });
+  assert.ok(view.webSocket);
+  const [browser] = relay.viewers.keys();
+  browser.emit('message', JSON.stringify({ watch: ['voron', 'BAD ID'] }));
+  assert.deepEqual(JSON.parse(uplink.sent.at(-1)), { cameras: ['voron'] });
+
+  const packet = picture => Uint8Array.of(5, ...new TextEncoder().encode('voron'), 255, 216, picture, 255, 217).buffer;
+  uplink.emit('message', packet(1));
+  assert.deepEqual(new Uint8Array(browser.sent.at(-1)), new Uint8Array(packet(1)));
+  uplink.emit('message', packet(2));                 // the browser is still drawing picture 1: hold back
+  assert.equal(browser.sent.length, 1);
+  uplink.emit('message', packet(3));
+  browser.emit('message', JSON.stringify({ ack: 'voron' }));
+  assert.deepEqual(new Uint8Array(browser.sent.at(-1)), new Uint8Array(packet(3)));   // newest, 2 skipped
+  assert.equal(browser.sent.length, 2);
+  uplink.emit('message', new Uint8Array([3, 102, 111, 111, 255, 216]).buffer);   // a camera nobody asked for
+  assert.equal(browser.sent.length, 2);
+  // The plain picture address still works for older pages.
+  assert.deepEqual(new Uint8Array(await (await fetch('/snap/voron')).arrayBuffer()), Uint8Array.of(255, 216, 3, 255, 217));
+
+  browser.emit('close');
+  assert.deepEqual(JSON.parse(uplink.sent.at(-1)), { cameras: ['voron'] });   // the /snap request above still counts
+  assert.equal(relay.viewers.size, 0);
+});
+
+test('live link: a camera error from the printer PC reaches the browser', async t => {
+  globalThis.WebSocketPair = class { constructor() { this[0] = new FakeSocket(); this[1] = new FakeSocket(); } };
+  t.mock.property(globalThis, 'Response', UpgradeResponse);
+  t.after(() => { delete globalThis.WebSocketPair; });
+  const { fetch, relay } = fixture();
+  const send = printers => fetch('/connector', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: JSON.stringify({ session, printers }),
+  }, {});
+  const broken = { id: 'voron', name: 'Voron', status: {}, camera_error: 'camera service answered HTTP 500' };
+  await send([broken]);
+  await fetch('/live', { headers: { Upgrade: 'websocket', Origin: base } });
+  const [browser] = relay.viewers.keys();
+  browser.emit('message', JSON.stringify({ watch: ['voron'] }));
+  assert.deepEqual(JSON.parse(browser.sent.at(-1)), { camera: 'voron', error: broken.camera_error });
+  assert.deepEqual((await (await fetch('/snap/voron')).json()).error, broken.camera_error);
+  assert.deepEqual(await (await fetch('/api/printers')).json(), [{ id: 'voron', name: 'Voron' }]);
 });
