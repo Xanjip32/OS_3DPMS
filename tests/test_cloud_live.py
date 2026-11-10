@@ -106,9 +106,12 @@ class WebSocketClientTests(unittest.TestCase):
         relay.send(1, b'{"cameras":["voron"]}')
         relay.send(9, b"are you there")
         messages = []
-        self.assertTrue(relay.wait_for(lambda: messages.extend(ws.poll(0.05)) or messages))
+
+        def read_until_pong_arrives():   # the ping may come in a later read than the text (Linux)
+            messages.extend(ws.poll(0.05))
+            return messages and len(relay.received) >= 3
+        self.assertTrue(relay.wait_for(read_until_pong_arrives))
         self.assertEqual(messages, ['{"cameras":["voron"]}'])
-        self.assertTrue(relay.wait_for(lambda: len(relay.received) >= 3))
         self.assertEqual(relay.received[0], (2, big))
         self.assertEqual(relay.received[1], (1, b'{"hello":1}'))
         self.assertEqual(relay.received[2], (10, b"are you there"))   # ping answered with pong
