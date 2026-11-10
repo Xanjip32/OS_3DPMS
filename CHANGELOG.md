@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Cameras over Tailscale send fewer pictures so phones and slow links keep up: 1 a second per
+  card in the grid and up to 5 a second in the big view (about a fifth of the data before). The
+  printer PC itself still gets every picture
+
 ## 1.5.0-preview.2 (2026-11-10)
 
 - Setup shows a QR code of the Tailscale dashboard link: scan it with a phone camera to open the

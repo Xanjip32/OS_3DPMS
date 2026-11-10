@@ -1,6 +1,7 @@
 'use strict';
 
-const FRAME_MS = 200;               // grid refresh: about 5 frames per second per camera
+const FRAME_MS = 200;               // grid refresh on the printer PC: about 5 pictures a second per camera
+const REMOTE_FRAME_MS = 1000;       // over Tailscale (often a phone): 1 a second, so links are not overrun
 const STALE_MS = 20000;             // keep showing the last picture this long before explaining the gap
 const STATUS_MS = 5000;
 const UPLOAD_RE = /\.(gcode|gco|g|3mf)$/i;
@@ -210,7 +211,7 @@ function buildTile(p) {
         throw new Error(data.error || `Camera error (HTTP ${r.status})`);
       }
       await show(await r.blob());
-      setTimeout(nextFrame, FRAME_MS);
+      setTimeout(nextFrame, info.admin ? FRAME_MS : REMOTE_FRAME_MS);
     } catch (e) {
       if (stopped) return;
       explain(e.message);

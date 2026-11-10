@@ -742,6 +742,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.end_headers()
         last = 0.0
+        # Remote viewers (over Tailscale, often on a phone) get at most 5 pictures a second: a full
+        # camera rate would overrun mobile links and drop frames. The PC itself gets every picture.
+        gap = 0.0 if self.admin else 0.2
         while True:
             hub.touch()
             frame, ts = hub.wait_frame(last, 30)
@@ -750,6 +753,8 @@ class Handler(BaseHTTPRequestHandler):
             last = ts
             self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n"
                              % len(frame) + frame + b"\r\n")
+            if gap:
+                time.sleep(gap)
 
     def send_qr(self):
         """QR code of the Tailscale dashboard link, for phones to scan from the Setup page."""
