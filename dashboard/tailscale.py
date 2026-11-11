@@ -172,6 +172,10 @@ def serve_targets():
     return targets
 
 
+def unpublish(port):
+    _run(["serve", "--https=%d" % port, "off"], 20)
+
+
 def publish(mappings):
     """Publish each (https_port, local_port) on the tailnet. Stops at the first step that needs the user."""
     results = []

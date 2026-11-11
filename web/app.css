@@ -274,3 +274,10 @@ ul.ports { margin: 6px 0; padding-left: 18px; color: var(--muted); }
   .view .open, .progress > div { transition: none; }
 }
 .qr { display: block; margin: 10px 0 4px; border-radius: 6px; }
+.form-dialog { border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: min(420px, calc(100vw - 32px));
+               background: var(--panel); color: var(--text); }
+.form-dialog::backdrop { background: rgb(0 0 0 / .45); }
+.form-dialog form { display: grid; gap: 12px; }
+.form-dialog h2 { margin: 0; font-size: 18px; }
+.form-dialog .bambu-only { display: grid; gap: 12px; }
+.form-dialog .bambu-only[hidden] { display: none; }

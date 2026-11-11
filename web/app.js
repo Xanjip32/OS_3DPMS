@@ -388,36 +388,117 @@ function renderCounts() {
   $('device-counts').replaceChildren(item(printers.length, printers.length === 1 ? 'printer' : 'printers', 'idle'));
 }
 
-// Devices page: Edit and Remove only on the printer PC itself, where printer settings are managed.
+// Devices page: Add, Edit and Remove. On the printer PC, and remotely for accounts listed in Setup.
 function deviceActions(p) {
   const box = actionButtons(p, false);
-  if (!info.admin) return box;
+  if (!info.can_edit) return box;
   box.append(
-    el('a', { class: 'btn', href: `/setup#printer-${encodeURIComponent(p.id)}`, text: 'Edit' }),
+    el('button', { text: 'Edit', onclick: () => openPrinterDialog(p.id) }),
     el('button', { text: 'Remove', onclick: () => removePrinter(p) }));
   return box;
 }
 
+// The saved printer list without secrets (the page never gets access codes or API keys).
+async function devicesList() {
+  const r = await fetch('/api/devices');
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data.printers;
+}
+
+async function saveDevices(list) {
+  const r = await fetch('/api/devices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
+    // Leaving a code out keeps the saved one; the has_ markers only describe it.
+    body: JSON.stringify({ printers: list.map(({ has_access_code, has_api_key, ...x }) => x) }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || !data.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  printers = await (await fetch('/api/printers')).json();
+  render();
+}
+
 async function removePrinter(p) {
-  if (!confirm(`Remove ${p.name} from OS_3DPMS?\n\nThe printer itself is not changed. You can add it again in Setup.`)) return;
+  if (!confirm(`Remove ${p.name} from OS_3DPMS?\n\nThe printer itself is not changed. You can add it again.`)) return;
   try {
-    const cfg = await (await fetch('/api/setup/config')).json();
-    // Saved access codes and API keys stay on the PC: the page never has them, so leave their markers out.
-    const rest = cfg.printers.filter(x => x.id !== p.id).map(({ has_access_code, has_api_key, ...x }) => x);
-    const r = await fetch('/api/setup/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
-      body: JSON.stringify({ printers: rest }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || !data.ok) throw new Error(data.error || `HTTP ${r.status}`);
-    printers = await (await fetch('/api/printers')).json();
-    render();
+    await saveDevices((await devicesList()).filter(x => x.id !== p.id));
     toast(`Removed ${p.name}`);
   } catch (e) {
     toast(`${p.name} was not removed: ${e.message}`, true);
   }
 }
+
+const printerDialog = $('printer-dialog');
+let editing = null;   // saved settings of the printer being edited; null while adding one
+const slug = text => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'printer';
+const showBambuFields = () => {
+  printerDialog.querySelector('.bambu-only').hidden = (editing ? editing.type : $('printer-type').value) !== 'bambu';
+};
+$('printer-type').addEventListener('change', showBambuFields);
+$('printer-cancel').addEventListener('click', () => printerDialog.close());
+document.querySelectorAll('.add-printer').forEach(b => b.addEventListener('click', () => openPrinterDialog(null)));
+
+async function openPrinterDialog(id) {
+  let list;
+  try { list = await devicesList(); } catch (e) { toast(e.message, true); return; }
+  editing = id ? list.find(x => x.id === id) : null;
+  if (id && !editing) { toast('That printer was removed meanwhile.', true); return; }
+  $('printer-title').textContent = editing ? `Edit ${editing.name}` : 'Add printer';
+  $('printer-type-field').hidden = !!editing;
+  $('printer-name').value = editing?.name || '';
+  $('printer-host').value = editing?.host || '';
+  $('printer-code').value = '';
+  $('printer-code').placeholder = editing?.has_access_code ? 'saved (leave empty to keep it)' : '';
+  $('printer-serial').value = editing?.serial || '';
+  $('printer-rotate').value = String(editing?.rotate || 0);
+  $('printer-msg').textContent = '';
+  showBambuFields();
+  printerDialog.showModal();
+}
+
+$('printer-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = $('printer-msg');
+  const button = $('printer-save');
+  button.disabled = true;
+  msg.className = 'msg';
+  msg.textContent = 'Saving…';
+  try {
+    const list = await devicesList();
+    const type = editing ? editing.type : $('printer-type').value;
+    const fields = { name: $('printer-name').value.trim(), host: $('printer-host').value.trim(),
+      rotate: Number($('printer-rotate').value) };
+    if (type === 'bambu') {
+      fields.serial = $('printer-serial').value.trim();
+      if ($('printer-code').value.trim()) fields.access_code = $('printer-code').value.trim();
+    }
+    if (editing) {
+      const i = list.findIndex(x => x.id === editing.id);
+      if (i < 0) throw new Error('That printer was removed meanwhile.');
+      list[i] = { ...list[i], ...fields };
+    } else {
+      const ids = new Set(list.map(x => x.id));
+      let id = slug(fields.name);
+      for (let n = 2; ids.has(id); n++) id = `${slug(fields.name).slice(0, 29)}-${n}`;
+      const item = { id, type, ...fields };
+      if (type === 'klipper') {   // its Mainsail page gets the next free port, as in Setup
+        const ports = new Set(list.map(x => Number(x.ui_port)).filter(Boolean));
+        item.ui_port = 8101;
+        while (ports.has(item.ui_port)) item.ui_port++;
+      }
+      list.push(item);
+    }
+    await saveDevices(list);
+    printerDialog.close();
+    toast(editing ? `Saved ${fields.name}` : `Added ${fields.name}. Its camera and status appear in a few seconds.`);
+  } catch (err) {
+    msg.className = 'msg bad';
+    msg.textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 function actionButtons(p, withSend) {
   const box = el('div', { class: 'row-actions' });
@@ -563,7 +644,7 @@ async function renderQueue() {
   const n = data.jobs.length;
   $('queue-count').textContent = n ? `${n} job${n === 1 ? '' : 's'}` : '';
   if (!n) {
-    notice(queueBox, 'The queue is empty. Add jobs with "Add to queue" on the Files page.');
+    notice(queueBox, 'The queue is empty. Click + Add job, or Add to queue on the Files page.');
     return;
   }
   queueBox.replaceChildren(table([
@@ -601,34 +682,80 @@ setInterval(() => {
 }, 5000);
 
 filesAdd.addEventListener('click', () => filesInput.click());
-filesInput.addEventListener('change', () => {
+// Upload a file into Files; resolves to the name it was saved under.
+function uploadToLibrary(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    if (!UPLOAD_RE.test(file.name)) { reject(new Error('Only .gcode or .3mf files')); return; }
+    if (file.size > maxUploadMb * 1048576) { reject(new Error(`File is larger than ${maxUploadMb} MB`)); return; }
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/files?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('X-Dashboard', '1');
+    xhr.upload.addEventListener('progress', e => {
+      if (e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100));
+    });
+    xhr.addEventListener('load', () => {
+      let r = {};
+      try { r = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+      if (xhr.status === 200 && r.ok) resolve(r.name);
+      else reject(new Error(r.error || `Upload failed (HTTP ${xhr.status})`));
+    });
+    xhr.addEventListener('error', () => reject(new Error('Lost connection to the dashboard')));
+    xhr.send(file);
+  });
+}
+
+filesInput.addEventListener('change', async () => {
   const file = filesInput.files[0];
   filesInput.value = '';
   if (!file) return;
-  if (!UPLOAD_RE.test(file.name)) { toast('Only .gcode or .3mf files', true); return; }
-  if (file.size > maxUploadMb * 1048576) { toast(`File is larger than ${maxUploadMb} MB`, true); return; }
   if (fileNames.has(file.name) && !confirm(`${file.name} is already in the library. Replace it?`)) return;
   filesAdd.disabled = true;
-  const done = (msg, bad) => {
+  try {
+    toast(`Saved ${await uploadToLibrary(file, pct => { filesAdd.textContent = `Uploading ${pct}%`; })}`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
     filesAdd.disabled = false;
     filesAdd.textContent = '+ Upload file';
-    toast(msg, bad);
     renderFiles();
-  };
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', `/api/files?name=${encodeURIComponent(file.name)}`);
-  xhr.setRequestHeader('X-Dashboard', '1');
-  xhr.upload.addEventListener('progress', e => {
-    if (e.lengthComputable) filesAdd.textContent = `Uploading ${Math.round(e.loaded / e.total * 100)}%`;
-  });
-  xhr.addEventListener('load', () => {
-    let r = {};
-    try { r = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
-    if (xhr.status === 200 && r.ok) done(r.message);
-    else done(r.error || `Upload failed (HTTP ${xhr.status})`, true);
-  });
-  xhr.addEventListener('error', () => done('Lost connection to the dashboard', true));
-  xhr.send(file);
+  }
+});
+
+// Queue page: Add job (a file from Files, or a new upload, for one printer).
+const jobDialog = $('job-dialog');
+$('job-cancel').addEventListener('click', () => jobDialog.close());
+$('queue-add').addEventListener('click', async () => {
+  $('job-msg').textContent = '';
+  $('job-upload').value = '';
+  $('job-printer').replaceChildren(...printers.map(p => el('option', { value: p.id, text: p.name })));
+  let files = [];
+  try { files = (await (await fetch('/api/files')).json()).files; } catch (e) { /* upload one instead */ }
+  $('job-file').replaceChildren(...(files.length ? files.map(f => el('option', { value: f.name, text: f.name }))
+    : [el('option', { value: '', text: 'No files yet: upload one below' })]));
+  jobDialog.showModal();
+});
+$('job-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = $('job-msg');
+  const button = $('job-save');
+  button.disabled = true;
+  msg.className = 'msg';
+  try {
+    const file = $('job-upload').files[0];
+    const name = file ? await uploadToLibrary(file, pct => { msg.textContent = `Uploading ${file.name}… ${pct}%`; })
+      : $('job-file').value;
+    if (!name) throw new Error('Choose a file, or upload one.');
+    const [text, bad] = await apiPost(`/api/queue/add?name=${encodeURIComponent(name)}&printer=${encodeURIComponent($('job-printer').value)}`);
+    if (bad) throw new Error(text);
+    jobDialog.close();
+    toast(text);
+    renderQueue();
+  } catch (err) {
+    msg.className = 'msg bad';
+    msg.textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 
 // ---------------------------------------------------------------- hidden cameras menu
@@ -814,6 +941,7 @@ function showUser() {
   $('who').textContent = who;
   $('who').classList.toggle('hidden', !who);
   document.querySelectorAll('.admin-only').forEach(a => a.classList.toggle('hidden', !info.admin));
+  document.querySelectorAll('.can-edit').forEach(a => a.classList.toggle('hidden', !info.can_edit));
 }
 
 async function start() {

@@ -28,6 +28,7 @@ a user's browser, and the printers' network traffic.
 | Printer sends the dashboard elsewhere (redirect / SSRF) | Camera and Moonraker requests follow redirects only on the same printer, so the API key and requests never go to another computer. |
 | Swapped Bambu upload | The FTPS data connection must present the same pinned printer certificate as the login connection. |
 | Setup page reachable remotely | The admin listener is never published, and it refuses any `Host` header other than `127.0.0.1`/`localhost` (blocks DNS rebinding). |
+| Printers changed remotely | The Devices page may add, edit and remove printers over Tailscale only for accounts listed in *Allowed Tailscale accounts* (an empty list allows nobody remotely). Access codes and API keys are never sent to the browser; the same CSRF checks as uploads apply, and every change is in `audit.log`. |
 | Malicious website sends uploads (CSRF) | POST requests need the `X-Dashboard: 1` header (forces a CORS preflight that is never granted), a matching `Origin`, and `Sec-Fetch-Site: same-origin`. |
 | Script injection (XSS) | Printer names are inserted with `textContent` only. CSP `default-src 'self'` with no inline scripts or styles, `frame-ancestors 'none'`, `nosniff`. |
 | Camera images embedded by other sites | `Cross-Origin-Resource-Policy: same-origin`. |

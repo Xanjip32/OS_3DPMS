@@ -32,7 +32,9 @@ Works with a mix of printers:
 - Queue page: line up files per printer (**Add to queue** on the Files page). Each printer runs its
   jobs in order; when it is free (standby, finished or cancelled), its next job shows **Bed is
   clear, start**. Nothing starts by itself. The queue is kept in `queue.json` next to `config.json`
-- Devices page: **+ Add printer**, and **Edit** / **Remove** on each printer (on the printer PC)
+- Devices page: **+ Add printer**, and **Edit** / **Remove** on each printer, on the PC and over
+  Tailscale for the accounts listed in Setup → *Allowed Tailscale accounts*
+- Queue page: **+ Add job** picks a printer and a file from Files, or uploads a new one
 - Remote access over Tailscale, set up from the setup page, with a QR code to open it on a phone
 - Print status and progress for Klipper and Bambu printers
 - Notifications when a print finishes, fails, pauses or a printer goes offline: pop-ups in the
@@ -171,6 +173,7 @@ Read [SECURITY.md](SECURITY.md) for the full threat model. In short:
 - Remote dashboard requests must carry the Tailscale identity header by default.
   An optional allow-list restricts access to specific accounts.
 - The setup page is never published and rejects non-local `Host` headers (DNS rebinding).
+  Printers can be changed remotely only by accounts listed in *Allowed Tailscale accounts*.
 - Uploads need a same-origin custom header and pass Origin / `Sec-Fetch-Site` checks (CSRF).
 - Strict Content-Security-Policy, no inline scripts, `X-Frame-Options: DENY`.
 - Secrets are encrypted at rest with Windows DPAPI and never sent to the browser.

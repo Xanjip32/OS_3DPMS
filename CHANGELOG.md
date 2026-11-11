@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Devices page: **+ Add printer**, **Edit** and **Remove** now work over Tailscale too, in a dialog
+  inside the dashboard, for accounts listed in Setup → Allowed Tailscale accounts. A new Klipper
+  printer's Mainsail port is published on Tailscale automatically, and a removed one's is taken down
+- Queue page: **+ Add job**: choose a printer and a file from Files, or upload a new file right there
 - Cameras over Tailscale send fewer pictures so phones and slow links keep up: 1 a second per
   card in the grid and up to 5 a second in the big view (about a fifth of the data before). The
   printer PC itself still gets every picture

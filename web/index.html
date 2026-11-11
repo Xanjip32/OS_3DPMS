@@ -63,7 +63,7 @@
         <div id="hidden-menu" class="menu hidden"></div>
       </span>
       <span class="grow"></span>
-      <a class="btn primary hidden admin-only" href="/setup">+ Add printer</a>
+      <button class="primary hidden can-edit add-printer">+ Add printer</button>
     </div>
     <div class="grid" id="grid" aria-label="Printer cameras"></div>
     <div class="table-wrap hidden" id="list"></div>
@@ -75,7 +75,7 @@
     <div class="toolbar">
       <input id="device-search" type="search" placeholder="Search devices…" aria-label="Search devices">
       <span class="grow"></span>
-      <a class="btn primary hidden admin-only" href="/setup#printers">+ Add printer</a>
+      <button class="primary hidden can-edit add-printer">+ Add printer</button>
     </div>
     <div class="table-wrap" id="devices"></div>
   </section>
@@ -83,6 +83,7 @@
   <!-- ------------------------------------------------------------ queue -->
   <section class="page" data-page="queue" hidden>
     <div class="page-head"><h1>Queue</h1><div class="counts" id="queue-count"></div></div>
+    <div class="toolbar"><span class="grow"></span><button class="primary" id="queue-add">+ Add job</button></div>
     <div class="toolbar">
       <span class="muted">Jobs wait here in order for each printer. When a printer is free, check that its bed is
         clear, then start its next job. Add jobs with <b>Add to queue</b> on the Files page.</span>
@@ -137,6 +138,37 @@
   <img id="mimg" alt="">
 </div>
 <div id="toasts"></div>
+
+<dialog id="printer-dialog" class="form-dialog" aria-labelledby="printer-title">
+  <form id="printer-form">
+    <h2 id="printer-title">Add printer</h2>
+    <label class="field" id="printer-type-field">Type
+      <select id="printer-type"><option value="klipper">Klipper / Mainsail</option><option value="bambu">Bambu Lab</option></select></label>
+    <label class="field">Name<input id="printer-name" required maxlength="64" placeholder="Voron 350"></label>
+    <label class="field">IP address or hostname
+      <input id="printer-host" required placeholder="192.168.0.25" spellcheck="false" autocomplete="off"></label>
+    <div class="bambu-only">
+      <label class="field">LAN access code (printer screen: Settings &gt; WLAN)
+        <input id="printer-code" type="password" autocomplete="off"></label>
+      <label class="field">Serial number (optional)<input id="printer-serial" spellcheck="false" autocomplete="off"></label>
+    </div>
+    <label class="field">Camera rotation
+      <select id="printer-rotate"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
+    <p class="msg" id="printer-msg" role="status"></p>
+    <div class="actions"><button class="primary" id="printer-save">Save</button><button type="button" id="printer-cancel">Cancel</button></div>
+  </form>
+</dialog>
+
+<dialog id="job-dialog" class="form-dialog" aria-labelledby="job-title">
+  <form id="job-form">
+    <h2 id="job-title">Add a print job</h2>
+    <label class="field">Printer<select id="job-printer"></select></label>
+    <label class="field">File from Files<select id="job-file"></select></label>
+    <label class="field">Or upload a new file<input type="file" id="job-upload" accept=".gcode,.gco,.g,.3mf"></label>
+    <p class="msg" id="job-msg" role="status"></p>
+    <div class="actions"><button class="primary" id="job-save">Add to queue</button><button type="button" id="job-cancel">Cancel</button></div>
+  </form>
+</dialog>
 
 <template id="tile-template">
   <section class="tile nocam">

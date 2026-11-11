@@ -215,6 +215,41 @@ class DashboardTest(ServerFixture):
         self.assertEqual(os.listdir(self.app.files_dir), [])
         self.assertTrue(os.path.isfile(self.cfg_path))
 
+    # ---------------------------------------------------------------- devices page: add, edit, remove
+
+    def test_devices_change_remotely_only_for_listed_accounts(self):
+        h = {"X-Dashboard": "1"}
+        self.assertEqual(self.request("GET", "/api/devices")[0].status, 403)   # nobody listed yet
+        self.assertFalse(json.loads(self.request("GET", "/api/me")[1])["can_edit"])
+        self.app.apply_setup({"allowed_users": [USER]})
+        try:
+            self.assertTrue(json.loads(self.request("GET", "/api/me")[1])["can_edit"])
+            data = self.request("GET", "/api/devices")[1]
+            self.assertNotIn(b"secret123", data)
+            printers = [{k: v for k, v in p.items() if not k.startswith("has_")} for p in json.loads(data)["printers"]]
+            renamed = [dict(p, name="Voron renamed") if p["id"] == "voron" else p for p in printers]
+            mine = "http://127.0.0.1:%d" % self.app.cfg["port"]
+            served = {443: mine, 8199: "http://127.0.0.1:8199", 9000: "http://127.0.0.1:5000"}
+            with mock.patch.object(web.tailscale, "serve_targets", return_value=served), \
+                    mock.patch.object(web.tailscale, "publish") as publish, \
+                    mock.patch.object(web.tailscale, "unpublish") as unpublish:
+                resp, body = self.request("POST", "/api/devices", json.dumps({"printers": renamed}), h)
+                self.assertEqual(resp.status, 200, body)
+                time.sleep(0.2)
+                publish.assert_called_once()   # this dashboard is published: new Mainsail ports follow
+                unpublish.assert_called_once_with(8199)   # a removed printer's port; never someone else's 9000
+            self.assertEqual(self.app.printers["voron"]["name"], "Voron renamed")
+            self.assertEqual(config.secret(self.app.printers["p1s"], "access_code"), "secret123")
+            bad = {"printers": [{"id": "x", "type": "bambu", "host": "1.2.3.4"}]}   # Bambu without its code
+            with mock.patch.object(web.tailscale, "serve_targets", return_value={}):
+                self.assertEqual(self.request("POST", "/api/devices", json.dumps(bad), h)[0].status, 400)
+                foreign = {"X-Dashboard": "1", "Origin": "https://evil.example"}
+                self.assertEqual(self.request("POST", "/api/devices", json.dumps({"printers": renamed}), foreign)[0].status, 403)
+                self.assertEqual(self.request("POST", "/api/devices", json.dumps({"printers": printers}), h)[0].status, 200)
+        finally:
+            self.app.apply_setup({"allowed_users": []})
+        self.assertEqual(self.app.printers["voron"]["name"], "Voron")
+
     # ---------------------------------------------------------------- print queue
 
     def test_print_queue_runs_jobs_in_order_on_a_free_printer(self):

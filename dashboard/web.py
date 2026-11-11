@@ -45,7 +45,9 @@ PUBLIC_FILES = {
 }
 ADMIN_FILES = {"/setup": ("setup.html", HTML), "/setup.js": ("setup.js", JS)}
 UPLOAD_EXTENSIONS = (".gcode", ".gco", ".g", ".3mf")
-FREE_STATES = ("standby", "complete", "cancelled")  # a queued job may start (after the bed check)
+FREE_STATES = ("standby", "complete", "cancelled")
+EDIT_REFUSED = ("Only accounts listed in Setup > Allowed Tailscale accounts may change printers remotely. "
+                "Add yours there on the printer PC.")  # a queued job may start (after the bed check)
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost"}
 MAX_JSON_BODY = 64 * 1024
 MAX_CONNECTIONS = 100
@@ -528,7 +530,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/me":
                 return self.send_json(200, {"user": user, "admin": self.admin, "version": __version__,
-                                            "max_upload_mb": app.cfg["max_upload_mb"]})
+                                            "max_upload_mb": app.cfg["max_upload_mb"],
+                                            "can_edit": self.can_edit_printers(user)})
             if path == "/api/printers":
                 return self.send_json(200, [{
                     "id": p["id"], "name": p["name"], "type": p["type"], "ui_port": p.get("ui_port"),
@@ -542,6 +545,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/queue":
                 with app.lock:
                     return self.send_json(200, {"jobs": app.queue_view()})
+            if path == "/api/devices":
+                if not self.can_edit_printers(user):
+                    return self.send_json(403, {"error": EDIT_REFUSED})
+                return self.send_json(200, {"printers": app.setup_config()["printers"]})
             if len(parts) == 2 and parts[0] in ("snap", "cam"):
                 hub = app.hubs.get(parts[1])
                 if hub is None:
@@ -582,6 +589,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.handle_files(user, path)
             if path in ("/api/queue/add", "/api/queue/remove", "/api/queue/start"):
                 return self.handle_queue(user, path)
+            if path == "/api/devices":
+                return self.save_devices(user)
             if self.admin and path == "/api/setup/config":
                 try:
                     payload = self.read_json()
@@ -782,6 +791,41 @@ class Handler(BaseHTTPRequestHandler):
             "printers": len(self.app.printers),
         })
 
+    def can_edit_printers(self, user):
+        """Printer settings change on the PC itself, or remotely by an account named in Allowed accounts."""
+        return self.admin or user in self.app.cfg["allowed_users"]
+
+    def save_devices(self, user):
+        """Devices page: save the whole printer list (Add, Edit and Remove all send it)."""
+        if not self.can_edit_printers(user):
+            return self.send_json(403, {"ok": False, "error": EDIT_REFUSED})
+        app = self.app
+        try:
+            payload = self.read_json()
+            if not isinstance(payload, dict) or "printers" not in payload:
+                raise config.ConfigError("bad request")
+            with app.lock:
+                app.apply_setup({"printers": payload["printers"]})
+        except config.ConfigError as e:
+            return self.send_json(400, {"ok": False, "error": str(e)})
+        app.audit(user, "devices-saved", printers=len(app.printers))
+        # A new Klipper printer's Mainsail port must be published too, or its button cannot open
+        # remotely. Only when Tailscale already publishes this dashboard (never someone else's).
+        dashboard = "http://127.0.0.1:%d" % app.cfg["port"]
+        served = tailscale.serve_targets()
+        if served.get(443, "").rstrip("/") == dashboard:
+            maps = dict(app.publish_mappings())
+            # A removed printer's Mainsail port: only forwards in this app's own port-to-same-port form.
+            stale = [port for port, target in served.items()
+                     if port not in maps and target.rstrip("/") == "http://127.0.0.1:%d" % port]
+
+            def sync():
+                tailscale.publish(list(maps.items()))
+                for port in stale:
+                    tailscale.unpublish(port)
+            threading.Thread(target=sync, daemon=True).start()
+        self.send_json(200, {"ok": True})
+
     def query(self, key, default=""):
         return urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get(key, [default])[0]
 
@@ -883,7 +927,7 @@ class Handler(BaseHTTPRequestHandler):
             if tmp:
                 os.replace(tmp, os.path.join(app.files_dir, name))
                 app.audit(user, "file-saved", file=name, bytes=os.path.getsize(os.path.join(app.files_dir, name)))
-                self.send_json(200, {"ok": True, "message": "Saved %s" % name})
+                self.send_json(200, {"ok": True, "name": name, "message": "Saved %s" % name})
             return
         target = os.path.join(app.files_dir, name)
         if not name.lower().endswith(UPLOAD_EXTENSIONS) or not os.path.isfile(target):
