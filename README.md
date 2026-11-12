@@ -24,10 +24,12 @@ Works with a mix of printers:
 - Simple navigation: Dashboard, Devices, Queue, Files and Settings in a sidebar (bottom tabs on phones)
 - Status counts, search, All / Active / Inactive filters, and camera grid or list view
 - Camera cards fill the screen on a desktop and stack on phones
-- Click a camera to enlarge it. Use the Mainsail button to open printer controls.
+- Click a camera to enlarge it. The Mainsail button opens the printer's controls inside the app
+  (Open in browser is there too).
 - Drag and drop G-code upload, with an optional "start print" (skipped when the printer is busy)
 - Files page: keep G-code and 3MF files on the printer PC (the `files` folder next to
-  `config.json`) and send any of them to any printer, with or without starting the print. Shows
+  `config.json`), send any of them to any printer with or without starting the print, or download
+  them again. Shows
   the free disk space. Works on the PC and over Tailscale
 - Queue page: line up files per printer (**Add to queue** on the Files page). Each printer runs its
   jobs in order; when it is free (standby, finished or cancelled), its next job shows **Bed is

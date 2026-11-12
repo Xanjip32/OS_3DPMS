@@ -126,8 +126,25 @@ function closeModal() {
   modalPrinter = null;
 }
 $('mclose').addEventListener('click', closeModal);
-$('mopen').addEventListener('click', () => window.open(mainsailUrl(modalPrinter), '_blank', 'noopener'));
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+$('mopen').addEventListener('click', () => { const p = modalPrinter; closeModal(); openMainsail(p); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeMainsail(); } });
+
+// Mainsail inside the app, like a slicer's device tab; Open in browser stays as a way out.
+const mainsailView = $('mainsail-view');
+function openMainsail(p) {
+  const url = mainsailUrl(p);
+  $('mainsail-name').textContent = `${p.name} · Mainsail`;
+  $('mainsail-tab').href = url;
+  $('mainsail-frame').src = url;
+  mainsailView.hidden = false;
+}
+function closeMainsail() {
+  if (mainsailView.hidden) return;
+  mainsailView.hidden = true;
+  $('mainsail-frame').src = 'about:blank';   // closes Mainsail's live connection to the printer
+}
+$('mainsail-close').addEventListener('click', closeMainsail);
+$('mainsail-tab').addEventListener('click', closeMainsail);
 
 // A file dropped outside a card must not open in the browser.
 window.addEventListener('dragover', e => e.preventDefault());
@@ -223,7 +240,7 @@ function buildTile(p) {
   cameraObserver.observe(t);
   nextFrame();
 
-  const openUi = () => window.open(mainsailUrl(p), '_blank', 'noopener');
+  const openUi = () => openMainsail(p);
   q('.view').addEventListener('click', () => openModal(p));
   q('.live').addEventListener('click', () => openModal(p));
   if (canMainsail(p)) q('.ui').addEventListener('click', openUi);
@@ -503,7 +520,7 @@ $('printer-form').addEventListener('submit', async e => {
 function actionButtons(p, withSend) {
   const box = el('div', { class: 'row-actions' });
   box.append(el('button', { text: 'Camera', onclick: () => openModal(p) }));
-  if (canMainsail(p)) box.append(el('button', { text: 'Mainsail', onclick: () => window.open(mainsailUrl(p), '_blank', 'noopener') }));
+  if (canMainsail(p)) box.append(el('button', { text: 'Mainsail', onclick: () => openMainsail(p) }));
   if (withSend && tiles.has(p.id)) {
     box.append(el('button', { class: 'primary', text: 'Send file', onclick: () => {
       view = 'grid';
@@ -617,6 +634,7 @@ function fileActions(f) {
   return el('div', { class: 'row-actions' }, pick,
     el('button', { class: 'primary', text: 'Send', onclick: () => send(false) }),
     el('button', { text: 'Send and print', onclick: () => send(true) }),
+    el('a', { class: 'btn', href: `/api/files/download?name=${name}`, download: f.name, text: 'Download' }),
     el('button', { text: 'Add to queue', onclick: async () => {
       toast(...await apiPost(`/api/queue/add?name=${name}&printer=${encodeURIComponent(pick.value)}`));
     } }),

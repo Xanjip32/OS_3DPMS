@@ -53,6 +53,8 @@ MAX_JSON_BODY = 64 * 1024
 MAX_CONNECTIONS = 100
 CSP = ("default-src 'self'; img-src 'self' blob:; script-src 'self'; style-src 'self'; "
        "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
+       # Mainsail opens inside the app: it is served on another port of this PC or of its Tailscale name.
+       "frame-src 'self' http://127.0.0.1:* http://localhost:* https://*.ts.net:*; "
        "frame-ancestors 'none'")
 EDITABLE_FIELDS = ("id", "name", "type", "host", "ui_port", "http_port", "webcam_url", "rotate",
                    "flip_horizontal", "flip_vertical", "serial", "use_ams")
@@ -542,6 +544,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_status(parts[2])
             if path == "/api/files":
                 return self.send_files()
+            if path == "/api/files/download":
+                return self.send_library_file()
             if path == "/api/queue":
                 with app.lock:
                     return self.send_json(200, {"jobs": app.queue_view()})
@@ -918,6 +922,21 @@ class Handler(BaseHTTPRequestHandler):
                 files.append({"name": entry.name, "size": st.st_size, "modified": int(st.st_mtime)})
         files.sort(key=lambda f: f["modified"], reverse=True)
         self.send_json(200, {"files": files, "free": shutil.disk_usage(self.app.files_dir).free})
+
+    def send_library_file(self):
+        name = safe_filename(self.query("name"))
+        target = os.path.join(self.app.files_dir, name)
+        if not name.lower().endswith(UPLOAD_EXTENSIONS) or not os.path.isfile(target):
+            return self.send_json(404, {"error": "no such file in the library"})
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(os.path.getsize(target)))
+        # safe_filename leaves no quotes or line breaks; non-ASCII names go in the UTF-8 form
+        self.send_header("Content-Disposition", "attachment; filename=\"%s\"; filename*=UTF-8''%s"
+                         % (name.encode("ascii", "replace").decode(), urllib.parse.quote(name)))
+        self.end_headers()
+        with open(target, "rb") as f:
+            shutil.copyfileobj(f, self.wfile, 1 << 20)
 
     def handle_files(self, user, path):
         app = self.app

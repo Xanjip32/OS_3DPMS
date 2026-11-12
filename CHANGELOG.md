@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Mainsail opens inside the app, full screen with Close and Open in browser (like a slicer's device
+  tab), from the printer cards, the Devices list and the camera view
+- Files page: **Download** a G-code or 3MF file from the printer PC
 - Devices page: **+ Add printer**, **Edit** and **Remove** now work over Tailscale too, in a dialog
   inside the dashboard, for accounts listed in Setup → Allowed Tailscale accounts. A new Klipper
   printer's Mainsail port is published on Tailscale automatically, and a removed one's is taken down

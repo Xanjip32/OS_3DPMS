@@ -163,6 +163,11 @@ button:disabled { opacity: .5; cursor: default; }
 
 #modal { position: fixed; inset: 0; background: #101d2a; color: #fff; display: none; z-index: 10; flex-direction: column; }
 #modal.show { display: flex; }
+#mainsail-view { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--bg); }
+#mainsail-view[hidden] { display: none; }
+#mainsail-view .mtop { display: flex; align-items: center; padding: 8px 12px; gap: 10px; border-bottom: 1px solid var(--line); }
+#mainsail-view .name { font-weight: 650; }
+#mainsail-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
 #modal .mtop { display: flex; align-items: center; padding: 10px 16px; gap: 12px; }
 #modal img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
 

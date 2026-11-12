@@ -133,6 +133,10 @@ class DashboardTest(ServerFixture):
     def test_security_headers(self):
         resp, _ = self.request("GET", "/")
         self.assertIn("default-src 'self'", resp.getheader("Content-Security-Policy"))
+        # Mainsail may open inside the app (this PC or its Tailscale name), but nobody may frame the app
+        self.assertIn("frame-src 'self' http://127.0.0.1:* http://localhost:* https://*.ts.net:*",
+                      resp.getheader("Content-Security-Policy"))
+        self.assertIn("frame-ancestors 'none'", resp.getheader("Content-Security-Policy"))
         self.assertEqual(resp.getheader("X-Frame-Options"), "DENY")
         self.assertEqual(resp.getheader("X-Content-Type-Options"), "nosniff")
 
@@ -199,6 +203,11 @@ class DashboardTest(ServerFixture):
         listing = json.loads(data)
         self.assertEqual([f["name"] for f in listing["files"]], ["part.gcode"])
         self.assertGreater(listing["free"], 0)
+        resp, data = self.request("GET", "/api/files/download?name=part.gcode")
+        self.assertEqual((resp.status, data), (200, b"G28\n"))
+        self.assertTrue(resp.getheader("Content-Disposition").startswith('attachment; filename="part.gcode"'))
+        for name in ("..%2Fconfig.json", "config.json", "gone.gcode"):   # only G-code in the library
+            self.assertEqual(self.request("GET", "/api/files/download?name=" + name)[0].status, 404, name)
         before = len(self.printer.uploads)
         resp, data = self.request("POST", "/api/files/send?name=part.gcode&printer=voron&print=0", None, h)
         self.assertEqual(resp.status, 200, data)
