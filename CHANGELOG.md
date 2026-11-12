@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- Mainsail opens inside the app, full screen with Close and Open in browser (like a slicer's device
-  tab), from the printer cards, the Devices list and the camera view
+- **Mainsail tab**: each printer's Mainsail inside the app, next to Dashboard (like a slicer's device
+  tab), with a printer picker and Open in browser. It stays loaded while you use the other tabs. The
+  Mainsail buttons on the cards, in Devices and in the camera view switch to it
 - Files page: **Download** a G-code or 3MF file from the printer PC
 - Devices page: **+ Add printer**, **Edit** and **Remove** now work over Tailscale too, in a dialog
   inside the dashboard, for accounts listed in Setup → Allowed Tailscale accounts. A new Klipper

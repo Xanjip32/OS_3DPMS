@@ -21,11 +21,12 @@ Works with a mix of printers:
 
 ## Features
 
-- Simple navigation: Dashboard, Devices, Queue, Files and Settings in a sidebar (bottom tabs on phones)
+- Simple navigation: Dashboard, Mainsail, Devices, Queue, Files and Settings in a sidebar (bottom
+  tabs on phones)
 - Status counts, search, All / Active / Inactive filters, and camera grid or list view
 - Camera cards fill the screen on a desktop and stack on phones
-- Click a camera to enlarge it. The Mainsail button opens the printer's controls inside the app
-  (Open in browser is there too).
+- Click a camera to enlarge it. The **Mainsail** tab shows each printer's Mainsail inside the app,
+  like a slicer's device tab, and stays loaded while you switch tabs; the Mainsail buttons jump there.
 - Drag and drop G-code upload, with an optional "start print" (skipped when the printer is busy)
 - Files page: keep G-code and 3MF files on the printer PC (the `files` folder next to
   `config.json`), send any of them to any printer with or without starting the print, or download

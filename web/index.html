@@ -28,6 +28,8 @@
 <nav class="sidebar" aria-label="Main">
   <a href="#/dashboard" data-nav="dashboard" title="Dashboard">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Dashboard</span></a>
+  <a href="#/mainsail" data-nav="mainsail" title="Mainsail">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span>Mainsail</span></a>
   <a href="#/devices" data-nav="devices" title="Devices">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="11" rx="1.5"/><path d="M9 14v3h6v-3M6 21h12M12 17v4"/></svg><span>Devices</span></a>
   <a href="#/queue" data-nav="queue" title="Queue">
@@ -67,6 +69,17 @@
     </div>
     <div class="grid" id="grid" aria-label="Printer cameras"></div>
     <div class="table-wrap hidden" id="list"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ mainsail -->
+  <section class="page" data-page="mainsail" hidden>
+    <div class="toolbar">
+      <label class="mainsail-pick">Printer <select id="mainsail-printer"></select></label>
+      <span class="grow"></span>
+      <a class="btn" id="mainsail-tab" target="_blank" rel="noopener">Open in browser</a>
+    </div>
+    <div id="mainsail-empty"></div>
+    <iframe id="mainsail-frame" title="Mainsail printer controls"></iframe>
   </section>
 
   <!-- ------------------------------------------------------------ devices -->
@@ -136,14 +149,6 @@
     <button id="mopen">Open Mainsail</button><button id="mclose">Close (Esc)</button>
   </div>
   <img id="mimg" alt="">
-</div>
-<div id="mainsail-view" hidden>
-  <div class="mtop">
-    <span class="name" id="mainsail-name"></span><span class="grow"></span>
-    <a class="btn" id="mainsail-tab" target="_blank" rel="noopener">Open in browser</a>
-    <button id="mainsail-close">Close (Esc)</button>
-  </div>
-  <iframe id="mainsail-frame" title="Mainsail printer controls"></iframe>
 </div>
 <div id="toasts"></div>
 

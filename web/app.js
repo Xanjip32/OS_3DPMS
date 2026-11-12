@@ -127,24 +127,43 @@ function closeModal() {
 }
 $('mclose').addEventListener('click', closeModal);
 $('mopen').addEventListener('click', () => { const p = modalPrinter; closeModal(); openMainsail(p); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeMainsail(); } });
 
-// Mainsail inside the app, like a slicer's device tab; Open in browser stays as a way out.
-const mainsailView = $('mainsail-view');
-function openMainsail(p) {
-  const url = mainsailUrl(p);
-  $('mainsail-name').textContent = `${p.name} · Mainsail`;
+// Mainsail tab: the printer's own Mainsail inside the app, like a slicer's device tab. It stays
+// loaded while you use the other tabs, so coming back does not reload it.
+const mainsailFrame = $('mainsail-frame');
+let mainsailId = load('os3dpms.mainsail', '');
+function renderMainsail() {
+  const list = printers.filter(canMainsail);
+  $('mainsail-printer').replaceChildren(...list.map(p => el('option', { value: p.id, text: p.name })));
+  $('mainsail-frame').hidden = !list.length;
+  $('mainsail-tab').classList.toggle('hidden', !list.length);
+  if (!list.length) {
+    notice($('mainsail-empty'), 'No Klipper printers with Mainsail yet. Add one on the Devices page.');
+    return;
+  }
+  $('mainsail-empty').replaceChildren();
+  if (!list.some(p => p.id === mainsailId)) mainsailId = list[0].id;
+  $('mainsail-printer').value = mainsailId;
+  const url = mainsailUrl(list.find(p => p.id === mainsailId));
   $('mainsail-tab').href = url;
-  $('mainsail-frame').src = url;
-  mainsailView.hidden = false;
+  if (mainsailFrame.dataset.url !== url) {
+    mainsailFrame.dataset.url = url;
+    mainsailFrame.src = url;
+  }
 }
-function closeMainsail() {
-  if (mainsailView.hidden) return;
-  mainsailView.hidden = true;
-  $('mainsail-frame').src = 'about:blank';   // closes Mainsail's live connection to the printer
+$('mainsail-printer').addEventListener('change', e => {
+  mainsailId = e.target.value;
+  save('os3dpms.mainsail', mainsailId);
+  renderMainsail();
+});
+function openMainsail(p) {
+  mainsailId = p.id;
+  save('os3dpms.mainsail', p.id);
+  if (location.hash === '#/mainsail') renderMainsail();
+  else location.hash = '#/mainsail';
 }
-$('mainsail-close').addEventListener('click', closeMainsail);
-$('mainsail-tab').addEventListener('click', closeMainsail);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
 
 // A file dropped outside a card must not open in the browser.
 window.addEventListener('dragover', e => e.preventDefault());
@@ -829,7 +848,7 @@ function renderSettings() {
 }
 
 // ---------------------------------------------------------------- pages
-const PAGES = { dashboard: 'Dashboard', devices: 'Devices', queue: 'Queue', files: 'Files', settings: 'Settings' };
+const PAGES = { dashboard: 'Dashboard', mainsail: 'Mainsail', devices: 'Devices', queue: 'Queue', files: 'Files', settings: 'Settings' };
 
 function route() {
   let page = location.hash.replace(/^#\/?/, '');
@@ -843,6 +862,7 @@ function route() {
   document.title = `${PAGES[page]} · Printers`;
   if (page === 'files') renderFiles();
   if (page === 'queue') renderQueue();
+  if (page === 'mainsail') renderMainsail();
 }
 window.addEventListener('hashchange', route);
 
