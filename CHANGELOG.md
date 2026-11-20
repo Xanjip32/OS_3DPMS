@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Bambu print start is confirmed**: OS_3DPMS waits for the printer to accept the print and shows
+  its reason when it refuses (newer firmware: turn on LAN Only Mode and Developer Mode), instead of
+  always saying "print started". A queued job whose start is refused now stays in the Queue
+- The print command goes over the open status connection when there is one, with its own
+  sequence id; a .3mf without a sliced plate is refused before upload; the AMS mapping follows
+  the project's filaments; spaces in file names become underscores for Bambu printers
 - **Mainsail tab**: each printer's Mainsail inside the app, next to Dashboard (like a slicer's device
   tab), with a printer picker and Open in browser. It stays loaded while you use the other tabs. The
   Mainsail buttons on the cards, in Devices and in the camera view switch to it

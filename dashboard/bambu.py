@@ -76,9 +76,98 @@ def _recv_exact(sock, n):
     return bytes(buf)
 
 
-def mqtt_publish(host, access_code, topic, payload, pins):
-    """Minimal MQTT 3.1.1 over TLS: CONNECT, PUBLISH (QoS 0), DISCONNECT."""
-    with tlspin.connect(host, 8883, pins) as s:
+class StartRefused(RuntimeError):
+    """The printer did not accept or did not confirm the print command."""
+
+
+# err_code values the printer sends back when Authorization Control blocks a LAN command.
+_AUTH_ERRORS = {"84033543", "84033545"}
+_AUTH_HELP = ("On the printer screen turn on Settings > LAN Only Mode and then Developer Mode "
+              "(newer firmware blocks print start from other apps otherwise). The file is on the "
+              "SD card, so you can also start it from the printer screen.")
+_STARTED = ("PREPARE", "RUNNING", "SLICING")
+
+
+def _new_seq():
+    return str(int(time.time() * 1000) % 1_000_000_000)
+
+
+def sliced_plate(path):
+    """(gcode entry, filament ids) of the first sliced plate in a .3mf; (None, []) if none."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            plates = sorted((n for n in z.namelist() if re.match(r"Metadata/plate_\d+\.gcode$", n)),
+                            key=lambda n: int(re.search(r"(\d+)", n).group(1)))
+            if not plates:
+                return None, []
+            plate = plates[0]
+            num = int(re.search(r"(\d+)", plate).group(1))
+            filaments = []
+            try:
+                info = z.read("Metadata/slice_info.config").decode("utf-8", "replace")
+                blocks = re.findall(r"<plate>.*?</plate>", info, re.S)
+                block = next((b for b in blocks if re.search(r'key="index" value="%d"' % num, b)), info)
+                filaments = sorted({int(i) for i in re.findall(r'<filament id="(\d+)"', block)})
+            except (KeyError, ValueError):
+                pass
+            return plate, filaments
+    except zipfile.BadZipFile:
+        raise ValueError("this .3mf file is damaged (not a zip archive)") from None
+
+
+def build_print_command(p, path, name, seq):
+    if name.lower().endswith(".3mf"):
+        plate, filaments = sliced_plate(path)
+        if not plate:
+            raise ValueError("this .3mf has no sliced plate. In Bambu Studio slice it, then use "
+                             "File > Export > Export plate sliced file (.gcode.3mf)")
+        use_ams = bool(p.get("use_ams"))
+        # Filament n of the project goes to AMS slot n-1, Bambu Studio's default mapping.
+        mapping = [max(0, f - 1) for f in filaments] if (use_ams and filaments) else [0]
+        return {"print": {
+            "sequence_id": seq, "command": "project_file", "param": plate,
+            "url": "file:///sdcard/" + name, "subtask_name": name,
+            "bed_type": "auto", "timelapse": False, "bed_leveling": True,
+            "flow_cali": False, "vibration_cali": True, "layer_inspect": False,
+            "use_ams": use_ams, "ams_mapping": mapping,
+            "profile_id": "0", "project_id": "0", "subtask_id": "0", "task_id": "0",
+        }}
+    return {"print": {"sequence_id": seq, "command": "gcode_file", "param": "/sdcard/" + name}}
+
+
+def check_reply(reply):
+    """Raise StartRefused if the printer's answer to a print command is a failure."""
+    if not reply:
+        return
+    result = str(reply.get("result", "")).lower()
+    err = str(reply.get("err_code") or "")
+    if result in ("fail", "failed", "error") or (err and err != "0"):
+        reason = str(reply.get("reason") or "")
+        auth = err in _AUTH_ERRORS or "verify" in reason.lower() or "auth" in reason.lower()
+        msg = "printer refused to start: %s" % (reason or ("authorization required" if auth else "no reason given"))
+        if err and err != "0":
+            msg += " (code %s)" % err
+        if auth:
+            msg += ". " + _AUTH_HELP
+        raise StartRefused(msg)
+
+
+def _match_reply(data, seq, command):
+    r = data.get("print") if isinstance(data, dict) else None
+    if isinstance(r, dict) and str(r.get("sequence_id")) == seq and r.get("command") == command:
+        return r
+    return None
+
+
+def mqtt_request(host, access_code, serial, payload, seq, command, pins, timeout=12):
+    """One MQTT session: subscribe to reports, publish the command, wait for the printer's answer.
+
+    Returns (answer dict or None, latest gcode_state)."""
+    topic_report = ("device/%s/report" % serial).encode()
+    topic_request = ("device/%s/request" % serial).encode()
+    buf = bytearray()
+    state = ""
+    with tlspin.connect(host, 8883, pins, timeout=15) as s:
         s.sendall(_connect_packet("os3dpms-" + uuid.uuid4().hex[:8], access_code))
         try:
             ack = _recv_exact(s, 4)
@@ -87,40 +176,68 @@ def mqtt_publish(host, access_code, topic, payload, pins):
         if ack[0] != 0x20 or ack[3] != 0:
             raise RuntimeError("printer refused the print command login: %s"
                                % MQTT_REFUSED.get(ack[3], "code %d" % ack[3]))
-        pub = _s16(topic.encode()) + payload
+        sub = struct.pack(">H", 1) + _s16(topic_report) + b"\x00"
+        s.sendall(bytes([0x82]) + _remaining(len(sub)) + sub)
+        pub = _s16(topic_request) + payload
         s.sendall(bytes([0x30]) + _remaining(len(pub)) + pub)
-        time.sleep(0.5)
+        s.settimeout(2)
+        deadline = time.time() + timeout
+        reply = None
+        while reply is None and time.time() < deadline:
+            pkt = _parse_packet(buf)
+            if pkt is None:
+                try:
+                    data = s.recv(65536)
+                except socket.timeout:
+                    continue
+                if not data:
+                    break
+                buf += data
+                if len(buf) > 4_000_000:
+                    break
+                continue
+            first, body = pkt
+            if first >> 4 != 3:
+                continue
+            tlen = struct.unpack(">H", body[:2])[0]
+            raw = body[2 + tlen + (2 if (first >> 1) & 3 else 0):]
+            try:
+                data = json.loads(raw.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            reply = _match_reply(data, seq, command)
+            r = data.get("print") if isinstance(data, dict) else None
+            if isinstance(r, dict) and r.get("gcode_state"):
+                state = str(r["gcode_state"]).upper()
+                if state in _STARTED:
+                    break
         try:
             s.sendall(b"\xe0\x00")
-        except (OSError, socket.error):
+        except OSError:
             pass
+    return reply, state
 
 
-def start_print(p, path, name, pins):
-    if name.lower().endswith(".3mf"):
-        plate = "Metadata/plate_1.gcode"
-        try:
-            with zipfile.ZipFile(path) as z:
-                plates = sorted(n for n in z.namelist() if re.match(r"Metadata/plate_\d+\.gcode$", n))
-                if plates:
-                    plate = plates[0]
-        except zipfile.BadZipFile:
-            pass
-        cmd = {"print": {
-            "sequence_id": "0", "command": "project_file", "param": plate,
-            "url": "file:///sdcard/" + name, "subtask_name": name,
-            "bed_type": "auto", "timelapse": False, "bed_leveling": True,
-            "flow_cali": False, "vibration_cali": True, "layer_inspect": False,
-            "use_ams": bool(p.get("use_ams")), "ams_mapping": [],
-            "profile_id": "0", "project_id": "0", "subtask_id": "0", "task_id": "0",
-        }}
+def start_print(p, path, name, pins, watcher=None, timeout=12):
+    """Send the print command and wait until the printer confirms it. Raises StartRefused."""
+    seq = _new_seq()
+    cmd = build_print_command(p, path, name, seq)
+    payload = json.dumps(cmd).encode()
+    command = cmd["print"]["command"]
+    topic = "device/%s/request" % p["serial"]
+    if watcher is not None and watcher.connected:
+        reply, state = watcher.request(topic, payload, seq, command, timeout)
     else:
-        cmd = {"print": {"sequence_id": "0", "command": "gcode_file", "param": "/sdcard/" + name}}
-    mqtt_publish(p["host"], config.secret(p, "access_code"),
-                 "device/%s/request" % p["serial"], json.dumps(cmd).encode(), pins)
+        reply, state = mqtt_request(p["host"], config.secret(p, "access_code"), p["serial"],
+                                    payload, seq, command, pins, timeout)
+    check_reply(reply)
+    if reply is None and state not in _STARTED:
+        raise StartRefused("the printer did not confirm the print within %d s. %s" % (timeout, _AUTH_HELP))
 
 
-def upload(p, path, name, start, pins):
+def upload(p, path, name, start, pins, watcher=None):
+    if start and p.get("serial") and name.lower().endswith(".3mf"):
+        build_print_command(p, path, name, "0")  # refuse a project that cannot print before uploading
     ftp = BambuFTPS(pins, timeout=60)
     ftp.connect(p["host"], 990)
     try:
@@ -137,7 +254,10 @@ def upload(p, path, name, start, pins):
         return "Uploaded to %s SD card" % p["name"]
     if not p.get("serial"):
         return "Uploaded to %s SD card. Add its serial number in setup to start prints." % p["name"]
-    start_print(p, path, name, pins)
+    try:
+        start_print(p, path, name, pins, watcher)
+    except StartRefused as e:
+        raise StartRefused("Uploaded to %s SD card, but %s" % (p["name"], e)) from None
     return "Uploaded to %s and print started" % p["name"]
 
 
@@ -224,6 +344,9 @@ class BambuWatcher(threading.Thread):
         self.stopped = threading.Event()
         self.sock = None
         self.buf = bytearray()
+        self.send_lock = threading.Lock()
+        self.replies = {}
+        self.reply_cond = threading.Condition()
 
     def stop(self):
         self.stopped.set()
@@ -277,7 +400,38 @@ class BambuWatcher(threading.Thread):
             self.stopped.wait(wait)
 
     def _send(self, data):
-        self.sock.sendall(data)
+        with self.send_lock:
+            self.sock.sendall(data)
+
+    def request(self, topic, payload, seq, command, timeout=12):
+        """Publish a command on the open status connection and wait for the printer's answer.
+
+        Returns (answer dict or None, latest gcode_state)."""
+        key = (seq, command)
+        with self.lock:
+            before = str(self.report.get("gcode_state", "")).upper()
+        with self.reply_cond:
+            self.replies[key] = None
+        try:
+            pub = _s16(topic.encode()) + payload
+            self._send(bytes([0x30]) + _remaining(len(pub)) + pub)
+            deadline = time.time() + timeout
+            with self.reply_cond:
+                while self.replies.get(key) is None:
+                    left = deadline - time.time()
+                    if left <= 0:
+                        break
+                    self.reply_cond.wait(min(left, 1))
+                    with self.lock:
+                        now = str(self.report.get("gcode_state", "")).upper()
+                    if now != before and now in _STARTED:
+                        break  # some firmware starts without echoing the command
+        finally:
+            with self.reply_cond:
+                reply = self.replies.pop(key, None)
+        with self.lock:
+            state = str(self.report.get("gcode_state", "")).upper()
+        return reply, state
 
     def _session(self):
         p = self.p
@@ -351,6 +505,13 @@ class BambuWatcher(threading.Thread):
         except ValueError:
             return
         report = data.get("print") if isinstance(data, dict) else None
+        if isinstance(report, dict) and report.get("command") not in (None, "push_status"):
+            key = (str(report.get("sequence_id")), report.get("command"))
+            with self.reply_cond:
+                if key in self.replies:
+                    self.replies[key] = report
+                    self.reply_cond.notify_all()
+            return  # answers to commands are not status reports
         if isinstance(report, dict):
             with self.lock:
                 self.report.update(report)

@@ -1,9 +1,13 @@
 """Bambu Lab camera, status and login handling, against a scripted fake printer socket."""
+import json
 import os
 import struct
 import sys
+import tempfile
+import threading
 import time
 import unittest
+import zipfile
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -172,6 +176,104 @@ class BambuLoginTests(unittest.TestCase):
     def test_error_code_format(self):
         self.assertEqual(bambu.error_code(50348044), "0300-400C")
         self.assertEqual(bambu.error_code(None), "None")
+
+
+SLICE_INFO = """<?xml version="1.0"?><config><plate>
+<metadata key="index" value="2"/>
+<filament id="1" type="PLA"/><filament id="3" type="PETG"/>
+</plate></config>"""
+
+
+def make_3mf(entries):
+    fd, path = tempfile.mkstemp(suffix=".3mf")
+    os.close(fd)
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return path
+
+
+class SendSink:
+    def __init__(self):
+        self.sent = []
+
+    def sendall(self, data):
+        self.sent.append(data)
+
+
+class PrintCommandTest(unittest.TestCase):
+    P = {"name": "P1S", "serial": "01P00A000000001", "use_ams": True}
+
+    def test_sliced_3mf_uses_its_plate_and_ams_mapping(self):
+        path = make_3mf({"Metadata/plate_2.gcode": "G28", "Metadata/slice_info.config": SLICE_INFO})
+        try:
+            cmd = bambu.build_print_command(self.P, path, "part.gcode.3mf", "42")["print"]
+        finally:
+            os.remove(path)
+        self.assertEqual(cmd["param"], "Metadata/plate_2.gcode")
+        self.assertEqual(cmd["ams_mapping"], [0, 2])
+        self.assertEqual(cmd["sequence_id"], "42")
+        self.assertTrue(cmd["use_ams"])
+
+    def test_unsliced_3mf_is_refused_before_upload(self):
+        path = make_3mf({"3D/3dmodel.model": "<model/>"})
+        try:
+            with self.assertRaises(ValueError) as cm:
+                bambu.upload(self.P, path, "project.3mf", True, pins=None)
+        finally:
+            os.remove(path)
+        self.assertIn("Export plate sliced file", str(cm.exception))
+
+    def test_gcode_command(self):
+        cmd = bambu.build_print_command(self.P, "x", "a.gcode", "7")["print"]
+        self.assertEqual(cmd, {"sequence_id": "7", "command": "gcode_file", "param": "/sdcard/a.gcode"})
+
+    def test_authorization_refusal_explains_developer_mode(self):
+        with self.assertRaises(bambu.StartRefused) as cm:
+            bambu.check_reply({"command": "project_file", "result": "fail",
+                               "reason": "mqtt message verify failed", "err_code": 84033543})
+        self.assertIn("Developer Mode", str(cm.exception))
+        bambu.check_reply({"command": "project_file", "result": "success"})
+
+
+class WatcherRequestTest(unittest.TestCase):
+    def watcher(self):
+        w = bambu.BambuWatcher({"id": "p1s", "serial": "S1", "host": "x"}, pins=None)
+        w.sock = SendSink()
+        w.connected = True
+        w.report = {"gcode_state": "IDLE"}
+        return w
+
+    def publish_later(self, w, obj, delay=0.2):
+        def go():
+            time.sleep(delay)
+            w._on_publish(0x30, bambu._s16(b"device/S1/report") + json.dumps(obj).encode())
+        threading.Thread(target=go, daemon=True).start()
+
+    def test_answer_is_matched_and_kept_out_of_the_status(self):
+        w = self.watcher()
+        self.publish_later(w, {"print": {"command": "project_file", "sequence_id": "9",
+                                         "result": "fail", "reason": "nope"}})
+        reply, _state = w.request("device/S1/request", b"{}", "9", "project_file", timeout=3)
+        self.assertEqual(reply["result"], "fail")
+        self.assertNotIn("result", w.report)
+        self.assertTrue(w.sock.sent)
+
+    def test_printer_starting_counts_as_confirmed(self):
+        w = self.watcher()
+        self.publish_later(w, {"print": {"command": "push_status", "gcode_state": "PREPARE"}})
+        t = time.time()
+        reply, state = w.request("device/S1/request", b"{}", "10", "project_file", timeout=5)
+        self.assertIsNone(reply)
+        self.assertEqual(state, "PREPARE")
+        self.assertLess(time.time() - t, 3)
+
+    def test_no_answer_is_not_reported_as_started(self):
+        w = self.watcher()
+        with self.assertRaises(bambu.StartRefused) as cm:
+            bambu.start_print({"name": "P1S", "serial": "S1", "host": "x"}, "x", "a.gcode", None,
+                              watcher=w, timeout=1)
+        self.assertIn("did not confirm", str(cm.exception))
 
 
 if __name__ == "__main__":

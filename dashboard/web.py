@@ -876,7 +876,9 @@ class Handler(BaseHTTPRequestHandler):
         size = os.path.getsize(path)
         try:
             if p["type"] == "bambu":
-                msg = bambu.upload(p, path, name, start, app.pins)
+                # Bambu firmware cannot open a print file whose name contains spaces.
+                msg = bambu.upload(p, path, name.replace(" ", "_"), start, app.pins,
+                                   app.bambu_watchers.get(p["id"]))
             else:
                 msg = klipper.upload(p, path, name, start)
             app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="ok")
