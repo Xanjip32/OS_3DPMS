@@ -56,6 +56,15 @@
 - `camera.idle_seconds` (default 20) and per-printer `camera_always_on` (Devices dialog: *Keep the
   camera connected without viewers*), useful for the bed check
 
+### Marlin through OctoPrint (branch `feature/bed-check-orca-plugin`)
+
+- OctoPrint status is now **pushed** over OctoPrint's raw SockJS WebSocket (`/sockjs/websocket`,
+  standard library, passive `/api/login` with the API key), with REST polling as fallback when it
+  is off (`"websocket": false`), refused or quiet for 15 s. Tested against a fake OctoPrint only
+- The type is now called **Marlin through OctoPrint** on the Setup and Devices pages, with a note
+  that a Marlin printer behind OctoPrint uses it (not *Marlin USB serial*, which is for a printer
+  plugged into this PC). Docs: [docs/ADAPTERS.md](docs/ADAPTERS.md)
+
 ### Universal printer adapters (branch `feature/universal-adapters`)
 
 - **Bambu remote control is now opt-in:** newly added Bambu printers are **read-only by default**

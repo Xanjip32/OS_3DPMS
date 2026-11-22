@@ -11,7 +11,7 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 HOST_RE = re.compile(r"^[A-Za-z0-9.\-]{1,253}$")
 SECRET_FIELDS = ("access_code", "api_key", "password")
 PRINTER_TYPES = ("klipper", "bambu", "octoprint", "prusalink", "marlin_serial")
-TYPE_LABELS = {"klipper": "Klipper (Moonraker)", "bambu": "Bambu Lab (LAN)", "octoprint": "OctoPrint",
+TYPE_LABELS = {"klipper": "Klipper (Moonraker)", "bambu": "Bambu Lab (LAN)", "octoprint": "Marlin through OctoPrint",
                "prusalink": "PrusaLink", "marlin_serial": "Marlin (USB serial)"}
 # Printers that talk HTTP to a host and port of their own.
 HTTP_TYPES = ("klipper", "octoprint", "prusalink")
@@ -162,8 +162,8 @@ def _validate(raw):
             used_ports.add(p["ui_port"])
         else:
             p.pop("ui_port", None)
-        if ptype == "klipper":
-            p["websocket"] = bool(p.get("websocket", True))
+        if ptype in ("klipper", "octoprint"):
+            p["websocket"] = bool(p.get("websocket", True))   # push channel, REST polling as fallback
         if ptype == "octoprint" and not _has_secret(p, "api_key"):
             raise ConfigError("%s: OctoPrint needs an API key (OctoPrint settings > Application Keys)" % pid)
         if ptype == "prusalink":

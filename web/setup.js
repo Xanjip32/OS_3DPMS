@@ -245,8 +245,8 @@ function field(label, input) {
 }
 
 const TYPE_TITLES = {
-  klipper: 'Klipper / Mainsail', bambu: 'Bambu Lab', octoprint: 'OctoPrint (Marlin)',
-  prusalink: 'PrusaLink', marlin_serial: 'Marlin USB serial (monitor only)',
+  klipper: 'Klipper / Mainsail', bambu: 'Bambu Lab', octoprint: 'Marlin through OctoPrint',
+  prusalink: 'PrusaLink', marlin_serial: 'Marlin USB serial on this PC (monitor only)',
 };
 
 function renderPrinters(checkIds = new Set()) {
@@ -285,6 +285,9 @@ function renderPrinters(checkIds = new Set()) {
     } else if (p.type === 'octoprint' || p.type === 'prusalink') {
       advanced.append(field('Printer HTTP port', bind('http_port', el('input', { type: 'number', min: '1', max: '65535', placeholder: '80' }))));
       if (p.type === 'octoprint') {
+        fields.append(el('p', { class: 'muted', text: 'A Marlin printer plugged into a Raspberry Pi or PC that runs '
+          + 'OctoPrint belongs here: enter the OctoPrint address, not a USB port. Status comes live over '
+          + "OctoPrint's push channel, with polling when that is not available." }));
         fields.append(field('OctoPrint API key', bind('api_key', el('input', {
           type: 'password', autocomplete: 'off', placeholder: p.has_api_key ? 'saved (leave empty to keep)' : 'Settings > Application Keys',
         }))));

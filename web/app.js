@@ -84,7 +84,7 @@ function caps(p) {
   return p.capabilities || {};
 }
 
-const TYPE_NAMES = { klipper: 'Klipper', bambu: 'Bambu Lab', octoprint: 'OctoPrint (Marlin)',
+const TYPE_NAMES = { klipper: 'Klipper', bambu: 'Bambu Lab', octoprint: 'Marlin via OctoPrint',
   prusalink: 'PrusaLink', marlin_serial: 'Marlin (USB)' };
 
 function temp(t) {
