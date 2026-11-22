@@ -201,6 +201,16 @@ Then set `"auth": {"mode": "tailscale+password"}` (both) or `"password"` in `con
 restart. Roles: **admin** and **operator** may upload and control, **viewer** only watches. The
 Setup page on the PC itself never asks for a password. Details: [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
 
+## Orca Slicer plugin (optional, beta)
+
+[`orca_plugin/os3dpms_printer_agent_any.py`](orca_plugin/os3dpms_printer_agent_any.py) is an Orca
+Slicer printer agent: Orca's *Print* button can put the file in the OS_3DPMS queue or print it now,
+and the Device tab shows the printer status. It needs an Orca Slicer **Nightly** build with plugin
+support (not the stable 2.5.2), *Preferences > Developer > Use printer agents instead of print
+hosts*, and an API token from the Setup page. Install it by side-loading the file or from the Orca
+Cloud Plugin Hub; from another computer use the Tailscale address. Not yet tested inside a real
+Orca Slicer build. Setup and limits: [docs/ORCA_PLUGIN.md](docs/ORCA_PLUGIN.md).
+
 ## Configuration
 
 The setup page writes `config.json`. Settings that are only in the file:
@@ -215,6 +225,7 @@ The setup page writes `config.json`. Settings that are only in the file:
 | `read_only_users` | `[]` | Tailscale logins that may watch but not upload or control |
 | `auth` | `{"mode": "tailscale"}` | `tailscale`, `password` or `tailscale+password`; `session_hours` (default 12) |
 | `users` | `[]` | Dashboard accounts (hashes only); manage with `run.py --add-user` / `--remove-user` |
+| `api_tokens` | `[]` | API tokens for programs such as the Orca Slicer plugin (hashes only); manage on the Setup page or with `run.py --add-token NAME [--role viewer]` / `--remove-token NAME` |
 
 Per printer: `type` (`klipper`, `bambu`, `octoprint`, `prusalink`, `marlin_serial`),
 `webcam_url` (override the camera URL), `rotate` (0/90/180/270), `flip_horizontal`,

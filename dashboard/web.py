@@ -11,6 +11,7 @@ Two listeners, both on 127.0.0.1 only:
 import argparse
 import atexit
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -74,6 +75,8 @@ EDITABLE_FIELDS = ("id", "name", "type", "host", "ui_port", "http_port", "webcam
                    # bed check and auto-start of the next queued job (1.6)
                    "auto_start", "bed_check_threshold", "bed_check_tolerance", "bed_check_frames",
                    "bed_check_roi", "bed_check_require_removal")
+TOKEN_USER = "token:"         # identity prefix of requests with an API token (Orca Slicer plugin)
+PLUGIN_ACTIONS = ("queue", "send", "print")
 AUTO_USER = "auto-start"       # audit log and history name for jobs the queue starts by itself
 AUTO_TICK_S = 5                # how often the auto-start looks at the queue
 
@@ -150,6 +153,7 @@ class App:
         self.login_limiter = auth.RateLimiter(5, 15 * 60)      # 5 attempts per 15 minutes per source+account
         self.account_limiter = auth.RateLimiter(20, 15 * 60)   # and 20 per account from everywhere together
         self.control_limiter = auth.RateLimiter(30, 60)        # 30 printer actions a minute per user
+        self.token_failures = auth.RateLimiter(10, 15 * 60)    # wrong API tokens per source
         self.monitor = None
         self.notifier = notify.Notifier(self)
         self.bambu_listener = discover.BambuListener()
@@ -336,7 +340,12 @@ class App:
                     log.warning("could not save the serial number of %s: %s", p["id"], e)
 
     def sessions_role(self, user):
-        """Role of a dashboard (password) account, or None for Tailscale logins."""
+        """Role of a dashboard (password) account or API token, or None for Tailscale logins."""
+        if isinstance(user, str) and user.startswith(TOKEN_USER):
+            for t in (self.cfg or {}).get("api_tokens", []):
+                if TOKEN_USER + t["name"] == user:
+                    return t["role"]
+            return "viewer"   # token removed meanwhile: never more than watching
         for u in (self.cfg or {}).get("users", []):
             if u["name"] == user:
                 return u["role"]
@@ -368,6 +377,20 @@ class App:
                  "user": user, "action": action}
         entry.update(fields)
         self.audit_log.info(json.dumps(entry))
+
+    def token_user(self, token):
+        """API token entry for a presented token, or None."""
+        return auth.find_token((self.cfg or {}).get("api_tokens", []), token)
+
+    def tokens_list(self):
+        return [{k: t[k] for k in ("name", "role", "created")} for t in self.cfg.get("api_tokens", [])]
+
+    def change_token(self, add=None, role="operator", remove=None):
+        """Create (returns the token, shown once) or remove an API token in config.json."""
+        token = change_token(self.config_path, add, role, remove)
+        with self.lock:
+            self.cfg = dict(self.cfg, api_tokens=config.load(self.config_path)["api_tokens"])
+        return token
 
     def setup_config(self):
         """Config for the setup page, without secrets."""
@@ -610,6 +633,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def identity(self):
         """Who is asking, or None to refuse."""
+        self.via_token = False
+        self.token_error = ""
+        authz = self.headers.get("Authorization") or ""
+        if authz[:7].lower() == "bearer ":
+            return self.token_identity(authz[7:].strip())
         if self.admin:
             # Admin port is never published; also reject DNS-rebinding hosts.
             host = (self.headers.get("Host") or "").lower().rsplit(":", 1)[0]
@@ -625,6 +653,37 @@ class Handler(BaseHTTPRequestHandler):
             return None
         session = self.app.sessions.get(auth.cookie_value(self.headers.get("Cookie")))
         return session[0] if session else None
+
+    def token_identity(self, token):
+        """An API token (Orca Slicer plugin and other programs): "token:<name>", or None.
+
+        Only on this PC's own names or its Tailscale name (the listeners are on 127.0.0.1, so
+        requests come from this PC or through `tailscale serve`). A Tailscale login that is not
+        allowed stays refused, even with a valid token. Wrong tokens are rate limited."""
+        if self.admin:
+            if (self.headers.get("Host") or "").lower().rsplit(":", 1)[0] not in LOCAL_HOSTNAMES:
+                return None
+        elif not local_or_tailnet(self.headers.get("Host")):
+            return None
+        login = (self.headers.get("Tailscale-User-Login") or "").strip().lower()
+        if login and not self.admin and self.tailscale_identity() is None:
+            return None
+        source = login or "local"
+        if self.app.token_failures.count(source) >= self.app.token_failures.limit:
+            self.token_error = "Too many wrong API tokens. Wait 15 minutes."
+            return None
+        entry = self.app.token_user(token)
+        if entry is None:
+            self.app.token_failures.allow(source)
+            self.app.audit(source, "token", result="wrong-token")
+            self.token_error = "Wrong or removed API token."
+            return None
+        self.via_token = True
+        return TOKEN_USER + entry["name"]
+
+    def setup_api(self):
+        """The Setup page API: the admin port, and never with an API token (tokens skip the CSRF check)."""
+        return self.admin and not self.via_token
 
     def tailscale_identity(self):
         login = (self.headers.get("Tailscale-User-Login") or "").strip().lower()
@@ -699,6 +758,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def refuse(self):
+        if getattr(self, "token_error", ""):
+            return self.send_json(401, {"error": self.token_error})
         login = (self.headers.get("Tailscale-User-Login") or "").strip()
         if self.password_mode() and local_or_tailnet(self.headers.get("Host")) and \
                 (self.app.cfg["auth"]["mode"] == "password" or self.tailscale_identity() is not None):
@@ -746,7 +807,11 @@ class Handler(BaseHTTPRequestHandler):
                                             "max_upload_mb": app.cfg["max_upload_mb"],
                                             "can_edit": self.can_edit_printers(user),
                                             "can_control": self.can_control(user),
-                                            "password_login": self.password_mode()})
+                                            "password_login": self.password_mode(),
+                                            "token": self.via_token,
+                                            "role": app.sessions_role(user) or ("admin" if self.admin else "")})
+            if path == "/api/plugin/printers":
+                return self.send_plugin_printers()
             if path == "/api/printers":
                 return self.send_json(200, [self.printer_entry(p) for p in app.cfg["printers"]])
             if path == "/api/locations":
@@ -794,12 +859,14 @@ class Handler(BaseHTTPRequestHandler):
                     after = 0
                 events, last = app.monitor.events_after(after)
                 return self.send_json(200, {"events": events[-50:], "last": last})
-            if self.admin and path == "/api/setup/qr.svg":
+            if self.setup_api() and path == "/api/setup/qr.svg":
                 return self.send_qr()
-            if self.admin and path == "/api/setup/status":
+            if self.setup_api() and path == "/api/setup/status":
                 return self.send_setup_status()
-            if self.admin and path == "/api/setup/config":
+            if self.setup_api() and path == "/api/setup/config":
                 return self.send_json(200, app.setup_config())
+            if self.setup_api() and path == "/api/setup/tokens":
+                return self.send_json(200, {"tokens": app.tokens_list()})
             self.send_json(404, {"error": "not found"})
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
@@ -814,9 +881,14 @@ class Handler(BaseHTTPRequestHandler):
                 if self.pre_login("POST", path):
                     return
                 return self.refuse()
-            if not self.same_origin():
+            # A browser never adds an Authorization header by itself, so token requests are not CSRF.
+            if not self.via_token and not self.same_origin():
                 return self.send_json(403, {"error": "cross-site request blocked"})
             parts = [x for x in path.split("/") if x]
+            if path == "/api/plugin/jobs":
+                return self.handle_plugin_job(user)
+            if self.setup_api() and path in ("/api/setup/tokens", "/api/setup/tokens/delete"):
+                return self.handle_tokens(user, path)
             if path == "/api/logout":
                 return self.handle_logout(user)
             if len(parts) == 4 and parts[:2] == ["api", "printers"] and parts[3] in CONTROL_ACTIONS:
@@ -831,7 +903,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.handle_bedcheck(user, parts[2], "/".join(parts[3:]))
             if path == "/api/devices":
                 return self.save_devices(user)
-            if self.admin and path == "/api/setup/config":
+            if self.setup_api() and path == "/api/setup/config":
                 try:
                     payload = self.read_json()
                     with self.app.lock:
@@ -840,7 +912,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"ok": False, "error": str(e)})
                 self.app.audit(user, "config-saved", printers=len(self.app.printers))
                 return self.send_json(200, {"ok": True})
-            if self.admin and path == "/api/setup/import-old":
+            if self.setup_api() and path == "/api/setup/import-old":
                 try:
                     with self.app.lock:
                         count = self.app.import_legacy()
@@ -850,9 +922,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, "imported": count})
             if self.admin and len(parts) == 4 and parts[:3] == ["api", "setup", "check-printer"]:
                 return self.check_printer(parts[3])
-            if self.admin and path == "/api/setup/discover":
+            if self.setup_api() and path == "/api/setup/discover":
                 return self.send_discovery()
-            if self.admin and path == "/api/setup/notifications":
+            if self.setup_api() and path == "/api/setup/notifications":
                 try:
                     payload = self.read_json()
                     with self.app.lock:
@@ -861,17 +933,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"ok": False, "error": str(e)})
                 self.app.audit(user, "notifications-saved", channels=self.app.notifier.channels())
                 return self.send_json(200, {"ok": True, "channels": self.app.notifier.channels()})
-            if self.admin and path == "/api/setup/notify-test":
+            if self.setup_api() and path == "/api/setup/notify-test":
                 event = self.app.monitor.test_event()
                 return self.send_json(200, {"results": self.app.notifier.deliver(event),
                                             "channels": self.app.notifier.channels()})
-            if self.admin and path == "/api/setup/install-tailscale":
+            if self.setup_api() and path == "/api/setup/install-tailscale":
                 result = tsinstall.start()
                 self.app.audit(user, "tailscale-install", result=result)
                 return self.send_json(200, result)
-            if self.admin and path == "/api/setup/login":
+            if self.setup_api() and path == "/api/setup/login":
                 return self.send_json(200, tailscale.start_login())
-            if self.admin and path == "/api/setup/publish":
+            if self.setup_api() and path == "/api/setup/publish":
                 results = tailscale.publish(self.app.publish_mappings())
                 self.app.audit(user, "publish", results=results)
                 return self.send_json(200, {"results": results})
@@ -1305,6 +1377,94 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             lock.release()
 
+    # ------------------------------------------------------------ API for programs (Orca Slicer plugin)
+
+    def send_plugin_printers(self):
+        """Every printer with its live status, queue and bed check, in one answer."""
+        app = self.app
+        with app.lock:
+            view = app.queue_view()
+        out = []
+        for p in app.cfg["printers"]:
+            st = (app.monitor.status.get(p["id"]) if app.monitor else None) or {"state": None}
+            entry = self.printer_entry(p)
+            entry["status"] = {k: st.get(k) for k in ("state", "file", "progress", "remaining_s", "message",
+                                                      "temperatures", "layer", "transport")}
+            entry["queue"] = [{k: j[k] for k in ("id", "file", "ready", "waiting")}
+                              for j in view if j["printer"] == p["id"]]
+            entry["bed_check"] = app.bed_check_summary(p)
+            out.append(entry)
+        return self.send_json(200, {"version": __version__, "printers": out})
+
+    def handle_plugin_job(self, user):
+        """One request from a slicer: the file in the body, and what to do with it.
+
+        action=queue (default): save it in Files (a different file with the same name gets a
+        new name) and add it to the printer's queue; it starts with the button or the bed check.
+        action=send / print: upload it to the printer, and for print start it now."""
+        app = self.app
+        if not self.can_control(user):
+            return self.send_json(403, {"ok": False, "error": READ_ONLY_REFUSED})
+        action = self.query("action", "queue")
+        p = app.printers.get(self.query("printer"))
+        if action not in PLUGIN_ACTIONS:
+            return self.send_json(400, {"ok": False, "error": "action must be queue, send or print"})
+        if p is None:
+            self.discard_body(int(self.headers.get("Content-Length") or 0))
+            return self.send_json(404, {"ok": False, "error": "unknown printer"})
+        name = safe_filename(self.query("name"))
+        if action == "queue":
+            tmp = self.read_upload(name)
+            if not tmp:
+                return
+            try:
+                saved = _library_name(app.files_dir, name, tmp)
+                if os.path.exists(os.path.join(app.files_dir, saved)):
+                    os.remove(tmp)    # the same file is already in Files
+                else:
+                    os.replace(tmp, os.path.join(app.files_dir, saved))
+                    app.audit(user, "file-saved", file=saved, bytes=os.path.getsize(os.path.join(app.files_dir, saved)))
+            except BaseException:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+                raise
+            job = {"id": uuid.uuid4().hex[:12], "file": saved, "printer": p["id"], "added": int(time.time()), "by": user}
+            with app.lock:
+                app.queue.append(job)
+                app.save_queue()
+            app.audit(user, "queue-add", file=saved, printer=p["id"])
+            return self.send_json(200, {"ok": True, "job": job["id"], "file": saved,
+                                        "message": "Queued %s for %s" % (saved, p["name"])})
+        lock = app.upload_locks.get(p["id"])
+        if lock is None or not lock.acquire(blocking=False):
+            self.discard_body(int(self.headers.get("Content-Length") or 0))
+            return self.send_json(409, {"ok": False, "error": "another upload to this printer is running"})
+        tmp = None
+        try:
+            tmp = self.read_upload(name)
+            if tmp:
+                self.send_to_printer(user, p, tmp, name, action == "print")
+        finally:
+            lock.release()
+            if tmp and os.path.exists(tmp):
+                os.remove(tmp)
+
+    def handle_tokens(self, user, path):
+        """Setup page (this PC only): create or remove API tokens."""
+        try:
+            payload = self.read_json()
+            payload = payload if isinstance(payload, dict) else {}
+            name = str(payload.get("name") or "")
+            if path == "/api/setup/tokens":
+                token = self.app.change_token(add=name, role=str(payload.get("role") or "operator"))
+                self.app.audit(user, "token-created", name=name.strip().lower())
+                return self.send_json(200, {"ok": True, "token": token, "tokens": self.app.tokens_list()})
+            self.app.change_token(remove=name)
+            self.app.audit(user, "token-removed", name=name.strip().lower())
+            return self.send_json(200, {"ok": True, "tokens": self.app.tokens_list()})
+        except config.ConfigError as e:
+            return self.send_json(400, {"ok": False, "error": str(e)})
+
     def handle_bedcheck(self, user, pid, action):
         """Save or delete a printer's empty-bed picture, or test the bed check now."""
         app = self.app
@@ -1449,6 +1609,26 @@ class AutoStarter:
         return False
 
 
+def _library_name(files_dir, name, path):
+    """Name for an uploaded file in Files: `name`, or `name (2)`... when a different file has it.
+    The same file (same SHA-256) keeps its name, so sending it twice does not make copies."""
+    def digest(p):
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    mine = digest(path)
+    stem, ext = os.path.splitext(name)
+    candidate, n = name, 2
+    while os.path.exists(os.path.join(files_dir, candidate)):
+        if digest(os.path.join(files_dir, candidate)) == mine:
+            return candidate
+        candidate = "%s (%d)%s" % (stem, n, ext)
+        n += 1
+    return candidate
+
+
 def make_handler(app, admin):
     return type("AdminHandler" if admin else "PublicHandler", (Handler,), {"app": app, "admin": admin})
 
@@ -1481,6 +1661,48 @@ def setup_logging(data_dir):
         sh = logging.StreamHandler()
         sh.setFormatter(fmt)
         root.addHandler(sh)
+
+
+def change_token(config_path, add=None, role="operator", remove=None):
+    """Add (returns the new token) or remove an API token in config.json. Raises ConfigError."""
+    raw = config.read_raw(config_path)
+    tokens = [t for t in raw.get("api_tokens") or [] if isinstance(t, dict)]
+    name = str(add or remove or "").strip().lower()
+    if not auth.TOKEN_NAME_RE.match(name):
+        raise config.ConfigError("Token names may use a-z, 0-9 and . _ - (up to 32 characters).")
+    if role not in auth.TOKEN_ROLES:
+        raise config.ConfigError("Token role must be operator or viewer.")
+    if remove and not any(t.get("name") == name for t in tokens):
+        raise config.ConfigError("No API token named %s." % name)
+    tokens = [t for t in tokens if t.get("name") != name]
+    token = None
+    if add:
+        token = auth.new_token()
+        tokens.append({"name": name, "token_sha256": auth.token_hash(token), "role": role,
+                       "created": datetime.datetime.now().isoformat(timespec="seconds")})
+    raw["api_tokens"] = tokens
+    cfg = config.validate(raw)
+    config.protect_secrets(cfg)
+    config.save(config_path, cfg)
+    return token
+
+
+def manage_token(args):
+    """--add-token / --remove-token: API tokens for programs such as the Orca Slicer plugin."""
+    if not os.path.exists(args.config):
+        config.write_default(args.config)
+    role = args.role if args.role in auth.TOKEN_ROLES else "operator"
+    try:
+        token = change_token(args.config, args.add_token, role, args.remove_token)
+    except config.ConfigError as e:
+        print(e)
+        return 2
+    if token:
+        print("API token %s (%s). Copy it now, it is not shown again:\n\n  %s\n\n"
+              "Restart OS_3DPMS to apply." % (args.add_token.strip().lower(), role, token))
+    else:
+        print("API token %s removed. Restart OS_3DPMS to apply." % args.remove_token.strip().lower())
+    return 0
 
 
 def manage_user(args, password=None):
@@ -1527,10 +1749,15 @@ def main(argv=None):
     parser.add_argument("--add-user", metavar="NAME", help="add or update a dashboard login (asks for the password)")
     parser.add_argument("--role", default="operator", choices=auth.ROLES, help="role for --add-user")
     parser.add_argument("--remove-user", metavar="NAME", help="remove a dashboard login")
+    parser.add_argument("--add-token", metavar="NAME",
+                        help="create an API token for a program such as the Orca Slicer plugin (--role operator or viewer)")
+    parser.add_argument("--remove-token", metavar="NAME", help="remove an API token")
     args = parser.parse_args(argv)
 
     if args.add_user or args.remove_user:
         return manage_user(args)
+    if args.add_token or args.remove_token:
+        return manage_token(args)
 
     if args.install_tailscale:
         logging.basicConfig(level=logging.INFO, format="%(message)s")

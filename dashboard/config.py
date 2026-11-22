@@ -35,6 +35,7 @@ DEFAULTS = {
     "read_only_users": [],          # Tailscale logins that may view but not upload or control
     "auth": {"mode": "tailscale"},  # see dashboard/auth.py
     "users": [],                    # dashboard accounts for password login (hashes only)
+    "api_tokens": [],               # tokens for programs (Orca Slicer plugin): SHA-256 only
 }
 
 NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline", "reconnected", "warning",
@@ -242,6 +243,23 @@ def _validate_auth(cfg):
             raise ConfigError("user %s: role must be admin, operator or viewer" % name)
         users.append({"name": name, "password_hash": u["password_hash"], "role": role})
     cfg["users"] = users
+    tokens, names = [], set()
+    for t in cfg.get("api_tokens") or []:
+        if not isinstance(t, dict):
+            raise ConfigError("api_tokens must be a list of objects")
+        name = str(t.get("name") or "").strip().lower()
+        if not auth.TOKEN_NAME_RE.match(name) or name in names:
+            raise ConfigError("API token name '%s' is invalid or used twice" % name)
+        names.add(name)
+        digest = str(t.get("token_sha256") or "").lower()
+        if not re.match(r"^[0-9a-f]{64}$", digest):
+            raise ConfigError("API token %s: token_sha256 missing (use run.py --add-token)" % name)
+        role = t.get("role") or "operator"
+        if role not in auth.TOKEN_ROLES:
+            raise ConfigError("API token %s: role must be operator or viewer" % name)
+        tokens.append({"name": name, "token_sha256": digest, "role": role,
+                       "created": str(t.get("created") or "")[:32]})
+    cfg["api_tokens"] = tokens
     if "password" in mode and not users:
         raise ConfigError("auth mode %s needs at least one user: run  py run.py --add-user NAME" % mode)
 

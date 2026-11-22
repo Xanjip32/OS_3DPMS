@@ -119,6 +119,21 @@
     </div>
   </details>
 
+  <details class="card tokens-card">
+    <summary>Orca Slicer plugin (API tokens) <span class="state" id="tk-state"></span></summary>
+    <p>The OS_3DPMS printer agent for Orca Slicer (folder <code>orca_plugin</code>, see docs/ORCA_PLUGIN.md) signs in
+      with an API token. Create one per computer that runs Orca Slicer, and paste it into the printer preset's
+      API key field. The token is shown <b>once</b>. An <b>operator</b> token may queue and send files; a
+      <b>viewer</b> token only reads status.</p>
+    <div class="field-grid">
+      <label class="field">Name<input id="tk-name" placeholder="orca-office" maxlength="32" spellcheck="false"></label>
+      <label class="field">Role<select id="tk-role"><option value="operator">operator</option><option value="viewer">viewer</option></select></label>
+      <div class="actions"><button class="primary" id="tk-create">Create token</button></div>
+    </div>
+    <p class="msg" id="tk-msg" role="status"></p>
+    <div id="tk-list"></div>
+  </details>
+
 </main>
 <script src="/setup.js"></script>
 </body>

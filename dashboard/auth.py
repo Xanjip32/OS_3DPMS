@@ -21,6 +21,10 @@ ROLES = ("admin", "operator", "viewer")
 USER_RE = re.compile(r"^[a-z0-9._@\-]{1,64}$")
 COOKIE = "os3dpms_session"
 MODES = ("tailscale", "password", "tailscale+password")
+# API tokens: for programs such as the Orca Slicer plugin (Authorization: Bearer <token>).
+TOKEN_ROLES = ("operator", "viewer")
+TOKEN_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._\-]{0,31}$")
+TOKEN_PREFIX = "os3_"
 
 
 def hash_password(password, iterations=ITERATIONS, salt=None):
@@ -40,6 +44,27 @@ def verify_password(password, stored):
     except (ValueError, AttributeError, TypeError):
         return False
     return hmac.compare_digest(calc.hex(), digest)
+
+
+def new_token():
+    """A new API token. Only its SHA-256 is stored; the token itself is shown once."""
+    return TOKEN_PREFIX + secrets.token_urlsafe(32)
+
+
+def token_hash(token):
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+
+def find_token(tokens, token):
+    """The api_tokens entry for a presented token, or None. Compares every entry in constant time."""
+    if not token or len(token) > 256:
+        return None
+    digest = token_hash(token)
+    match = None
+    for entry in tokens or []:
+        if hmac.compare_digest(str(entry.get("token_sha256", "")), digest):
+            match = entry
+    return match
 
 
 class Sessions:
@@ -95,6 +120,12 @@ class RateLimiter:
             if len(self.hits) > 10000:
                 self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < self.window}
             return True
+
+    def count(self, key):
+        """Events for key in the current window (without adding one)."""
+        now = time.time()
+        with self.lock:
+            return len([t for t in self.hits.get(key, []) if now - t < self.window])
 
     def reset(self, key):
         with self.lock:
