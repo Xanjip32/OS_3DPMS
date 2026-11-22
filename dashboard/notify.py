@@ -118,7 +118,7 @@ def send_email(n, password, subject, text, image=None, timeout=20):
 
 TAGS = {"complete": "white_check_mark", "error": "x", "paused": "pause_button",
         "cancelled": "stop_button", "offline": "warning", "started": "arrow_forward", "test": "bell",
-        "reconnected": "electric_plug", "warning": "warning"}
+        "reconnected": "electric_plug", "warning": "warning", "auto_started": "robot", "bed_not_clear": "broom"}
 
 
 class Notifier:

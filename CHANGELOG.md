@@ -6,6 +6,26 @@
   the "AMS reports no filament loaded" warning/alerts are hidden, so a printer used without an AMS
   no longer spams that warning
 
+### Bed check and opt-in auto-start (branch `feature/bed-check-orca-plugin`)
+
+- **Bed check** per printer: save an *empty-bed picture* on the Queue page; **Test now** compares
+  the camera with it and shows the score. No AI and no extra packages: the built-in reader takes
+  the 8×8 block averages straight from baseline JPEGs; Pillow is used when installed (optional,
+  also reads progressive JPEGs). Brightness and color are compared over a configurable bed area
+  (`bed_check_roi`), with light and white-balance drift compensated
+- **Auto-start** of the next queued job (`auto_start`, default **off**): only when the job is ready
+  by the existing queue rules, the camera picture is fresh and changing, a part was seen and then
+  removed (`bed_check_require_removal`, default on), and `bed_check_frames` pictures in a row match
+  the empty bed. Any error means no start; the manual **Bed is clear, start** button stays
+- Audit log entry `queue-auto-start` (user `auto-start`, with the score); new notification events
+  **auto_started** and **bed_not_clear** (on by default); a refused automatic start sends a warning
+  and leaves the job for a person
+- Queue starts re-check readiness while holding the printer's upload lock, so a job can never be
+  sent twice (also when two people press the button at the same time)
+- New API: `GET /api/bedcheck`, `GET /api/bedcheck/<id>/reference.jpg`,
+  `POST /api/bedcheck/<id>/reference`, `/reference/delete`, `/test`
+- Docs: [docs/BED_CHECK.md](docs/BED_CHECK.md) (how it works, settings, limits)
+
 ### Universal printer adapters (branch `feature/universal-adapters`)
 
 - **Bambu remote control is now opt-in:** newly added Bambu printers are **read-only by default**

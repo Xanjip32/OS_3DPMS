@@ -40,7 +40,12 @@ printer supports and what you allowed. See [docs/ADAPTERS.md](docs/ADAPTERS.md).
   the free disk space. Works on the PC and over Tailscale
 - Queue page: line up files per printer (**Add to queue** on the Files page). Each printer runs its
   jobs in order; when it is free (standby, finished or cancelled), its next job shows **Bed is
-  clear, start**. Nothing starts by itself. The queue is kept in `queue.json` next to `config.json`
+  clear, start**. Nothing starts by itself unless you turn on auto-start for that printer. The
+  queue is kept in `queue.json` next to `config.json`
+- Optional **bed check and auto-start** per printer (off by default): save a picture of the empty
+  bed; after a print, OS_3DPMS compares the camera with it and starts the next queued job by itself
+  once the part is removed. No AI, no extra packages (Pillow optional). Limits and settings:
+  [docs/BED_CHECK.md](docs/BED_CHECK.md)
 - Devices page: **+ Add printer**, and **Edit** / **Remove** on each printer, on the PC and over
   Tailscale for the accounts listed in Setup → *Allowed Tailscale accounts*
 - Queue page: **+ Add job** picks a printer and a file from Files, or uploads a new one
@@ -53,8 +58,9 @@ printer supports and what you allowed. See [docs/ADAPTERS.md](docs/ADAPTERS.md).
 - Concurrent monitoring: an offline printer never slows down the others
 - Optional password login with admin / operator / viewer roles, on top of or instead of
   Tailscale identity
-- Notifications when a print finishes, fails, pauses, a printer goes offline or comes back, or
-  reports a warning: pop-ups in the dashboard, and ntfy, Discord, Telegram or e-mail
+- Notifications when a print finishes, fails, pauses, a printer goes offline or comes back,
+  reports a warning, the queue auto-starts a job or waits for a clear bed: pop-ups in the
+  dashboard, and ntfy, Discord, Telegram or e-mail
 - Per-camera rotation and mirroring
 - Hide cameras you do not need on a device (× button), and show them again from the top bar
 - Guided setup for adding printers and checking their cameras
@@ -213,7 +219,9 @@ The setup page writes `config.json`. Settings that are only in the file:
 Per printer: `type` (`klipper`, `bambu`, `octoprint`, `prusalink`, `marlin_serial`),
 `webcam_url` (override the camera URL), `rotate` (0/90/180/270), `flip_horizontal`,
 `flip_vertical`, `http_port`, `location`, `manufacturer`, `model`, `allow_file_upload`,
-`allow_remote_control`; Bambu `mode` (`read_only` / `control`); serial `serial_port`, `baudrate`.
+`allow_remote_control`; Bambu `mode` (`read_only` / `control`); serial `serial_port`, `baudrate`;
+bed check `auto_start`, `bed_check_threshold`, `bed_check_tolerance`, `bed_check_frames`,
+`bed_check_roi`, `bed_check_require_removal` ([docs/BED_CHECK.md](docs/BED_CHECK.md)).
 Secrets (`api_key`, `access_code`, `password`) can be read from an environment variable with
 `<field>_env` on Linux/macOS. All fields per type: [docs/ADAPTERS.md](docs/ADAPTERS.md).
 

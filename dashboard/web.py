@@ -27,7 +27,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, adapters, auth, bambu, cameras, config, discover, klipper, monitor, notify, qr, tailscale, tsinstall
+from . import (__version__, adapters, auth, bambu, bedcheck, cameras, config, discover, klipper, monitor, notify, qr,
+               tailscale, tsinstall)
 from .services.job_manager import JobHistory
 from .services.printer_manager import PrinterManager
 from .forward import Forwarder, local_or_tailnet
@@ -55,7 +56,7 @@ UPLOAD_EXTENSIONS = (".gcode", ".gco", ".g", ".3mf")
 FREE_STATES = ("standby", "complete", "cancelled")
 READ_ONLY_REFUSED = "Your account may view printers but not send files or control them."
 EDIT_REFUSED = ("Only accounts listed in Setup > Allowed Tailscale accounts may change printers remotely. "
-                "Add yours there on the printer PC.")  # a queued job may start (after the bed check)
+                "Add yours there on the printer PC.")
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost"}
 MAX_JSON_BODY = 64 * 1024
 MAX_CONNECTIONS = 100
@@ -69,7 +70,12 @@ EDITABLE_FIELDS = ("id", "name", "type", "host", "ui_port", "http_port", "webcam
                    # added with the universal adapters (1.6)
                    "location", "manufacturer", "model", "allow_remote_control", "allow_file_upload",
                    "mode", "serial_port", "baudrate", "username", "websocket", "mqtt_port",
-                   "camera_port", "ftps_port", "access_code_env", "api_key_env", "password_env")
+                   "camera_port", "ftps_port", "access_code_env", "api_key_env", "password_env",
+                   # bed check and auto-start of the next queued job (1.6)
+                   "auto_start", "bed_check_threshold", "bed_check_tolerance", "bed_check_frames",
+                   "bed_check_roi", "bed_check_require_removal")
+AUTO_USER = "auto-start"       # audit log and history name for jobs the queue starts by itself
+AUTO_TICK_S = 5                # how often the auto-start looks at the queue
 
 
 IMPORT_FIELDS = EDITABLE_FIELDS + ("access_code", "api_key")
@@ -123,6 +129,8 @@ class App:
         self.queue_path = os.path.join(data_dir, "queue.json")
         self.queue = self.load_queue()
         self.queue_started = {}  # printer id -> when a queued job was started there
+        self.bedcheck = bedcheck.BedChecker(data_dir)
+        self.auto_failed = {}    # job id -> why its automatic start failed (then it waits for a person)
         for leftover in os.listdir(self.tmp_dir):
             try:
                 os.remove(os.path.join(self.tmp_dir, leftover))
@@ -149,6 +157,8 @@ class App:
         self.reload()
         self.monitor = monitor.Monitor(self)
         self.monitor.start()
+        self.autostarter = AutoStarter(self)
+        self.autostarter.start()
 
     # ---------------------------------------------------------------- print queue (Queue page)
 
@@ -187,9 +197,98 @@ class App:
                 why = "printer is %s" % (state or "not reporting its status")
             else:
                 why = ""
+            first = job["printer"] not in seen
             seen.add(job["printer"])
-            view.append(dict(job, printer_name=p["name"] if p else job["printer"], ready=not why, waiting=why))
+            item = dict(job, printer_name=p["name"] if p else job["printer"], ready=not why, waiting=why)
+            if first and p is not None:
+                item["bed_check"] = self.bed_check_summary(p, job)
+            view.append(item)
         return view
+
+    def bed_check_summary(self, p, job=None):
+        """What the Queue page shows about the bed check and auto-start of one printer."""
+        cfg = bedcheck.settings(p)
+        st = self.bedcheck.status(p["id"])
+        result = st.get("result") or {}
+        out = {"auto_start": cfg["auto_start"], "has_reference": self.bedcheck.reference_info(p["id"]) is not None,
+               "reason": st.get("reason", ""), "score": result.get("score"),
+               "threshold": cfg["bed_check_threshold"], "passes": st.get("passes", 0),
+               "needed": cfg["bed_check_frames"], "checked": st.get("checked"),
+               "seen_occupied": st.get("seen_occupied", False),
+               "require_removal": cfg["bed_check_require_removal"]}
+        if job is not None and job["id"] in self.auto_failed:
+            out["reason"] = "automatic start failed: %s. Start it by hand." % self.auto_failed[job["id"]]
+        return out
+
+    # ---------------------------------------------------------------- sending and starting files
+
+    def push_file(self, user, p, path, name, start, overwrite=False):
+        """Push a file on this PC to a printer. Returns (HTTP code, reply dict); never raises
+        for printer errors. The caller checks the account and holds the printer's upload lock."""
+        size = os.path.getsize(path)
+        adapter = self.adapter(p["id"])
+        if adapter is None:
+            return 503, {"ok": False, "error": "printer is not loaded; check Setup"}
+        if not adapter.accepts_file(name):
+            return 400, {"ok": False, "error": "%s takes %s files, not %s" % (
+                p["name"], ", ".join(adapter.file_extensions), os.path.splitext(name)[1] or "this file")}
+        if not overwrite and hasattr(adapter, "file_exists"):
+            if adapter.file_exists(name) is True:  # never replace a file on the printer without asking
+                return 409, {"ok": False, "exists": True,
+                             "error": "%s already has %s. Send again to replace it." % (p["name"], name)}
+        try:
+            # Bambu firmware cannot open a print file whose name contains spaces (the adapter renames).
+            msg = adapter.upload_file(path, name, start)
+            self.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="ok")
+            log.info("%s uploaded %s to %s", user, name, p["id"])
+            if start and "print started" in msg:
+                self.history.started(p["id"], name, user, "upload")
+            return 200, {"ok": True, "message": msg}
+        except adapters.AdapterError as e:
+            code = 403 if isinstance(e, adapters.NotAuthorized) else 409 if isinstance(e, adapters.PrinterBusy) \
+                else 400 if isinstance(e, adapters.NotSupported) else 502
+            self.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="refused",
+                       error=str(e)[:200])
+            return code, {"ok": False, "error": str(e)[:300]}
+        except Exception as e:
+            log.warning("upload to %s failed: %s", p["id"], e)
+            self.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="error",
+                       error=str(e)[:200])
+            return 502, {"ok": False, "error": str(e)[:300]}
+
+    def start_queued_job(self, jid, user, overwrite=False):
+        """Start a queued job if it is (still) ready. Returns (HTTP code, reply dict, job or None).
+
+        Used by the "Bed is clear, start" button and by the auto-start. Readiness is checked again
+        while holding the printer's upload lock, so two starts can never send the same job twice."""
+        with self.lock:
+            job = next((j for j in self.queue_view() if j["id"] == jid), None)
+        if job is None:
+            return 404, {"ok": False, "error": "no such job in the queue"}, None
+        p = self.printers.get(job["printer"])
+        lock = self.upload_locks.get(job["printer"])
+        if p is None or lock is None or not lock.acquire(blocking=False):
+            return 409, {"ok": False, "error": "another upload to this printer is running"}, job
+        try:
+            with self.lock:
+                job = next((j for j in self.queue_view() if j["id"] == jid), None)
+            if job is None:
+                return 404, {"ok": False, "error": "no such job in the queue"}, None
+            if not job["ready"]:
+                return 409, {"ok": False, "error": "cannot start yet: " + job["waiting"]}, job
+            code, reply = self.push_file(user, p, os.path.join(self.files_dir, job["file"]), job["file"], True,
+                                         overwrite)
+            if code != 200:
+                return code, reply, job   # the job stays queued; the reply says why
+            self.queue_started[p["id"]] = time.time()
+            with self.lock:
+                self.queue = [j for j in self.queue if j["id"] != jid]
+                self.save_queue()
+            self.auto_failed.pop(jid, None)
+            self.bedcheck.reset(p["id"])
+            return code, reply, job
+        finally:
+            lock.release()
 
     def reload(self):
         cfg = config.load(self.config_path)
@@ -665,6 +764,19 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/queue":
                 with app.lock:
                     return self.send_json(200, {"jobs": app.queue_view()})
+            if path == "/api/bedcheck":
+                return self.send_json(200, {"decoder": bedcheck.backend(), "printers": [
+                    dict(app.bed_check_summary(p), id=p["id"], name=p["name"], settings=bedcheck.settings(p),
+                         reference=app.bedcheck.reference_info(p["id"])) for p in app.cfg["printers"]]})
+            if len(parts) == 4 and parts[:2] == ["api", "bedcheck"] and parts[3] == "reference.jpg":
+                data = app.bedcheck.reference(parts[2]) if parts[2] in app.printers else None
+                if data is None:
+                    return self.send_json(404, {"error": "no empty-bed picture saved"})
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                return self.wfile.write(data)
             if path == "/api/devices":
                 if not self.can_edit_printers(user):
                     return self.send_json(403, {"error": EDIT_REFUSED})
@@ -715,6 +827,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.handle_files(user, path)
             if path in ("/api/queue/add", "/api/queue/remove", "/api/queue/start"):
                 return self.handle_queue(user, path)
+            if len(parts) >= 4 and parts[:2] == ["api", "bedcheck"]:
+                return self.handle_bedcheck(user, parts[2], "/".join(parts[3:]))
             if path == "/api/devices":
                 return self.save_devices(user)
             if self.admin and path == "/api/setup/config":
@@ -1101,46 +1215,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_to_printer(self, user, p, path, name, start):
         """Push a file on this PC to a printer and reply. The caller holds the printer's upload lock."""
-        app = self.app
-        size = os.path.getsize(path)
-        adapter = app.adapter(p["id"])
-        if adapter is None:
-            self.send_json(503, {"ok": False, "error": "printer is not loaded; check Setup"})
-            return False
-        if not self.can_control(user):
+        if self.app.adapter(p["id"]) is not None and not self.can_control(user):
             self.send_json(403, {"ok": False, "error": READ_ONLY_REFUSED})
             return False
-        if not adapter.accepts_file(name):
-            self.send_json(400, {"ok": False, "error": "%s takes %s files, not %s" % (
-                p["name"], ", ".join(adapter.file_extensions), os.path.splitext(name)[1] or "this file")})
-            return False
-        if self.query("overwrite", "0") != "1" and hasattr(adapter, "file_exists"):
-            if adapter.file_exists(name) is True:  # never replace a file on the printer without asking
-                self.send_json(409, {"ok": False, "exists": True,
-                                     "error": "%s already has %s. Send again to replace it." % (p["name"], name)})
-                return False
-        try:
-            # Bambu firmware cannot open a print file whose name contains spaces (the adapter renames).
-            msg = adapter.upload_file(path, name, start)
-            app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="ok")
-            log.info("%s uploaded %s to %s", user, name, p["id"])
-            if start and "print started" in msg:
-                app.history.started(p["id"], name, user, "upload")
-            self.send_json(200, {"ok": True, "message": msg})
-            return True
-        except adapters.AdapterError as e:
-            code = 403 if isinstance(e, adapters.NotAuthorized) else 409 if isinstance(e, adapters.PrinterBusy) \
-                else 400 if isinstance(e, adapters.NotSupported) else 502
-            app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="refused",
-                      error=str(e)[:200])
-            self.send_json(code, {"ok": False, "error": str(e)[:300]})
-            return False
-        except Exception as e:
-            log.warning("upload to %s failed: %s", p["id"], e)
-            app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="error",
-                      error=str(e)[:200])
-            self.send_json(502, {"ok": False, "error": str(e)[:300]})
-            return False
+        code, reply = self.app.push_file(user, p, path, name, start, self.query("overwrite", "0") == "1")
+        self.send_json(code, reply)
+        return code == 200
 
     def handle_upload(self, user, pid):
         app = self.app
@@ -1225,6 +1305,38 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             lock.release()
 
+    def handle_bedcheck(self, user, pid, action):
+        """Save or delete a printer's empty-bed picture, or test the bed check now."""
+        app = self.app
+        p = app.printers.get(pid)
+        hub = app.hubs.get(pid)
+        if p is None or hub is None:
+            return self.send_json(404, {"ok": False, "error": "unknown printer"})
+        if action in ("reference", "reference/delete") and not self.can_control(user):
+            return self.send_json(403, {"ok": False, "error": READ_ONLY_REFUSED})
+        if action == "reference/delete":
+            app.bedcheck.clear_reference(pid)
+            app.audit(user, "bed-reference-deleted", printer=pid)
+            return self.send_json(200, {"ok": True, "message": "Deleted the empty-bed picture of %s" % p["name"]})
+        if action not in ("reference", "test"):
+            return self.send_json(404, {"ok": False, "error": "not found"})
+        frame = hub.snapshot()
+        if frame is None:
+            return self.send_json(503, {"ok": False, "error": "No fresh picture from the camera of %s" % p["name"]})
+        try:
+            if action == "reference":
+                info = app.bedcheck.set_reference(pid, frame, user)
+                app.audit(user, "bed-reference-saved", printer=pid, bytes=len(frame))
+                return self.send_json(200, {"ok": True, "reference": info,
+                                            "message": "Saved the empty-bed picture of %s" % p["name"]})
+            result = app.bedcheck.check(pid, frame, bedcheck.settings(p))
+        except bedcheck.BedCheckError as e:
+            return self.send_json(400, {"ok": False, "error": str(e)})
+        verdict = "looks clear" if result["clear"] else "is NOT clear"
+        return self.send_json(200, {"ok": True, "result": result, "decoder": bedcheck.backend(),
+                                    "message": "%s: bed %s (%.1f%% changed, limit %.1f%%)" % (
+                                        p["name"], verdict, result["score"], result["threshold"])})
+
     def handle_queue(self, user, path):
         app = self.app
         if not self.can_control(user):
@@ -1243,30 +1355,98 @@ class Handler(BaseHTTPRequestHandler):
             app.audit(user, "queue-add", file=name, printer=p["id"])
             return self.send_json(200, {"ok": True, "message": "Queued %s for %s" % (name, p["name"])})
         jid = self.query("id")
+        if path == "/api/queue/start":
+            code, reply, job = app.start_queued_job(jid, user, self.query("overwrite", "0") == "1")
+            if code == 200:
+                app.audit(user, "queue-start", file=job["file"], printer=job["printer"])
+            return self.send_json(code, reply)
         with app.lock:
             job = next((j for j in app.queue_view() if j["id"] == jid), None)
-        if job is None:
-            return self.send_json(404, {"ok": False, "error": "no such job in the queue"})
-        if path == "/api/queue/start":
-            if not job["ready"]:
-                return self.send_json(409, {"ok": False, "error": "cannot start yet: " + job["waiting"]})
-            p = app.printers[job["printer"]]
-            lock = app.upload_locks.get(p["id"])
-            if lock is None or not lock.acquire(blocking=False):
-                return self.send_json(409, {"ok": False, "error": "another upload to this printer is running"})
-            try:
-                done = self.send_to_printer(user, p, os.path.join(app.files_dir, job["file"]), job["file"], True)
-            finally:
-                lock.release()
-            if not done:
-                return  # the job stays queued; the reply explained why
-            app.queue_started[p["id"]] = time.time()
-        with app.lock:
+            if job is None:
+                return self.send_json(404, {"ok": False, "error": "no such job in the queue"})
             app.queue = [j for j in app.queue if j["id"] != jid]
             app.save_queue()
-        app.audit(user, "queue-" + path.rsplit("/", 1)[1], file=job["file"], printer=job["printer"])
-        if path == "/api/queue/remove":
-            self.send_json(200, {"ok": True, "message": "Removed %s from the queue" % job["file"]})
+        app.auto_failed.pop(jid, None)
+        app.audit(user, "queue-remove", file=job["file"], printer=job["printer"])
+        self.send_json(200, {"ok": True, "message": "Removed %s from the queue" % job["file"]})
+
+
+class AutoStarter:
+    """Starts the next queued job by itself, only on printers with auto_start on.
+
+    Every condition must hold, otherwise nothing happens and the Queue keeps its manual
+    "Bed is clear, start" button: the job is ready by the normal queue rules (first for its
+    printer, file present, printer standby/complete/cancelled, no start in the last 30 s), an
+    empty-bed picture is saved, the camera gives fresh pictures, and bed_check_frames pictures
+    in a row match the empty bed (bedcheck.BedChecker.observe). Any error means no start.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True, name="auto-start").start()
+
+    def _run(self):
+        stopped = self.app.monitor.stopped
+        while not stopped.wait(AUTO_TICK_S):
+            try:
+                self.tick()
+            except Exception:
+                log.exception("auto-start check failed")
+
+    def tick(self):
+        app = self.app
+        status = app.monitor.status if app.monitor else {}
+        for pid, p in list(app.printers.items()):
+            if p.get("auto_start") and (status.get(pid) or {}).get("state") in monitor.BUSY:
+                app.bedcheck.reset(pid)   # printing: its bed needs a new check once it is done
+        with app.lock:
+            view = app.queue_view()
+        for job in view:
+            p = app.printers.get(job["printer"])
+            if p is None or "bed_check" not in job or not p.get("auto_start"):
+                continue
+            if not job["ready"] or job["id"] in app.auto_failed:
+                continue
+            try:
+                self.check_and_start(p, job)
+            except Exception:
+                log.exception("auto-start of %s on %s failed", job["file"], p["id"])
+
+    def check_and_start(self, p, job):
+        app, pid = self.app, p["id"]
+        cfg = bedcheck.settings(p)
+        if app.bedcheck.reference_info(pid) is None:
+            app.bedcheck.observe(pid, None, 0, cfg)   # records the reason for the Queue page
+            return False
+        hub = app.hubs.get(pid)
+        frame = hub.snapshot() if hub is not None else None
+        frame_time = 0.0
+        if frame is not None:
+            with hub.cond:
+                frame_time = hub.frame_time
+        st, ready = app.bedcheck.observe(pid, frame, frame_time, cfg)
+        result = st.get("result") or {}
+        if result and not result.get("clear") and app.bedcheck.take_notice(pid):
+            app.monitor.announce("bed_not_clear", p, {"file": job["file"], "message": st["reason"]})
+        if not ready:
+            return False
+        code, reply, _ = app.start_queued_job(job["id"], AUTO_USER)
+        fields = {"file": job["file"], "printer": pid, "score": result.get("score"),
+                  "threshold": result.get("threshold"), "frames": cfg["bed_check_frames"]}
+        if code == 200:
+            app.audit(AUTO_USER, "queue-auto-start", result="ok", **fields)
+            log.info("auto-start: %s started on %s (bed check %.2f%%)", job["file"], pid, result.get("score") or 0)
+            app.monitor.announce("auto_started", p, {"file": job["file"], "message": st["reason"]})
+            return True
+        error = reply.get("error", "failed")
+        app.audit(AUTO_USER, "queue-auto-start", result="refused", error=error[:200], **fields)
+        if code == 409 and ("cannot start yet" in error or "another upload" in error):
+            return False      # a person or another start got there first: nothing to report
+        app.auto_failed[job["id"]] = error[:200]
+        app.monitor.announce("warning", p, {"message": "automatic start of %s failed: %s" % (job["file"], error[:200])})
+        return False
 
 
 def make_handler(app, admin):
