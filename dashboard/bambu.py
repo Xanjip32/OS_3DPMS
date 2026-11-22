@@ -159,7 +159,7 @@ def _match_reply(data, seq, command):
     return None
 
 
-def mqtt_request(host, access_code, serial, payload, seq, command, pins, timeout=12):
+def mqtt_request(host, access_code, serial, payload, seq, command, pins, timeout=12, port=8883):
     """One MQTT session: subscribe to reports, publish the command, wait for the printer's answer.
 
     Returns (answer dict or None, latest gcode_state)."""
@@ -167,7 +167,7 @@ def mqtt_request(host, access_code, serial, payload, seq, command, pins, timeout
     topic_request = ("device/%s/request" % serial).encode()
     buf = bytearray()
     state = ""
-    with tlspin.connect(host, 8883, pins, timeout=15) as s:
+    with tlspin.connect(host, port, pins, timeout=15) as s:
         s.sendall(_connect_packet("os3dpms-" + uuid.uuid4().hex[:8], access_code))
         try:
             ack = _recv_exact(s, 4)
@@ -229,7 +229,7 @@ def start_print(p, path, name, pins, watcher=None, timeout=12):
         reply, state = watcher.request(topic, payload, seq, command, timeout)
     else:
         reply, state = mqtt_request(p["host"], config.secret(p, "access_code"), p["serial"],
-                                    payload, seq, command, pins, timeout)
+                                    payload, seq, command, pins, timeout, p.get("mqtt_port", 8883))
     check_reply(reply)
     if reply is None and state not in _STARTED:
         raise StartRefused("the printer did not confirm the print within %d s. %s" % (timeout, _AUTH_HELP))
@@ -239,7 +239,7 @@ def upload(p, path, name, start, pins, watcher=None):
     if start and p.get("serial") and name.lower().endswith(".3mf"):
         build_print_command(p, path, name, "0")  # refuse a project that cannot print before uploading
     ftp = BambuFTPS(pins, timeout=60)
-    ftp.connect(p["host"], 990)
+    ftp.connect(p["host"], p.get("ftps_port", 990))
     try:
         ftp.login("bblp", config.secret(p, "access_code"))
         ftp.prot_p()
@@ -296,11 +296,11 @@ def _connect_packet(client_id, access_code):
     return bytes([0x10]) + _remaining(len(var) + len(body)) + var + body
 
 
-def check_login(host, access_code, pins, timeout=8):
+def check_login(host, access_code, pins, timeout=8, port=8883):
     """(ok, text) for one MQTT login with this access code. Used by the setup check."""
     if not access_code:
         return False, "no LAN access code saved"
-    with tlspin.connect(host, 8883, pins, timeout=timeout) as s:
+    with tlspin.connect(host, port, pins, timeout=timeout) as s:
         s.sendall(_connect_packet("os3dpms-check-" + uuid.uuid4().hex[:6], access_code))
         buf = bytearray()
         deadline = time.time() + timeout
@@ -356,6 +356,11 @@ class BambuWatcher(threading.Thread):
                 sock.close()
             except OSError:
                 pass
+
+    def raw_report(self):
+        """Copy of the merged MQTT print report and whether it is fresh."""
+        with self.lock:
+            return dict(self.report), (self.connected or time.time() - self.last_report < 60)
 
     def status(self):
         """Same shape as klipper.status(), or None when the printer is unreachable."""
@@ -438,7 +443,7 @@ class BambuWatcher(threading.Thread):
         topic_report = ("device/%s/report" % p["serial"]).encode()
         topic_request = ("device/%s/request" % p["serial"]).encode()
         self.buf = bytearray()
-        with tlspin.connect(p["host"], 8883, self.pins, timeout=15) as s:
+        with tlspin.connect(p["host"], p.get("mqtt_port", 8883), self.pins, timeout=15) as s:
             self.sock = s
             self._send(_connect_packet("os3dpms-w-" + uuid.uuid4().hex[:8], config.secret(p, "access_code")))
             try:

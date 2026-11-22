@@ -9,8 +9,20 @@ from . import winsecret
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 HOST_RE = re.compile(r"^[A-Za-z0-9.\-]{1,253}$")
-SECRET_FIELDS = ("access_code", "api_key")
-PRINTER_TYPES = ("klipper", "bambu")
+SECRET_FIELDS = ("access_code", "api_key", "password")
+PRINTER_TYPES = ("klipper", "bambu", "octoprint", "prusalink", "marlin_serial")
+TYPE_LABELS = {"klipper": "Klipper (Moonraker)", "bambu": "Bambu Lab (LAN)", "octoprint": "OctoPrint",
+               "prusalink": "PrusaLink", "marlin_serial": "Marlin (USB serial)"}
+# Printers that talk HTTP to a host and port of their own.
+HTTP_TYPES = ("klipper", "octoprint", "prusalink")
+ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
+SERIAL_PORT_RE = re.compile(r"^(COM[1-9][0-9]{0,2}|/dev/[A-Za-z0-9_./\-]{1,64})$")
+BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 250000, 500000, 1000000)
+BAMBU_MODES = ("read_only", "control")
+# Remote control (start, pause, resume, cancel) and uploads, when the printer entry does not say.
+# Bambu and direct serial start read-only: the brief asks for a non-invasive first connection.
+CONTROL_DEFAULT = {"klipper": True, "octoprint": True, "prusalink": True, "bambu": False, "marlin_serial": False}
+TEXT_FIELDS = ("location", "manufacturer", "model")
 
 DEFAULTS = {
     "port": 8080,
@@ -20,10 +32,13 @@ DEFAULTS = {
     "require_tailscale_identity": True,
     "printers": [],
     "notifications": {},
+    "read_only_users": [],          # Tailscale logins that may view but not upload or control
+    "auth": {"mode": "tailscale"},  # see dashboard/auth.py
+    "users": [],                    # dashboard accounts for password login (hashes only)
 }
 
-NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline")
-NOTIFY_DEFAULT_ON = ("complete", "error", "paused", "offline")
+NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline", "reconnected", "warning")
+NOTIFY_DEFAULT_ON = ("complete", "error", "paused", "offline", "reconnected", "warning")
 NOTIFY_SECRETS = ("ntfy_url", "ntfy_token", "discord_webhook", "telegram_token")
 NTFY_RE = re.compile(r"^https://[A-Za-z0-9.\-]+(:\d+)?/[A-Za-z0-9_\-]{1,64}$")
 DISCORD_RE = re.compile(r"^https://(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)"
@@ -92,13 +107,30 @@ def _validate(raw):
         if pid in ids:
             raise ConfigError("duplicate printer id '%s'" % pid)
         ids.add(pid)
-        if p.get("type") not in PRINTER_TYPES:
-            raise ConfigError("%s: type must be 'klipper' or 'bambu'" % pid)
+        ptype = p.get("type")
+        if ptype not in PRINTER_TYPES:
+            raise ConfigError("%s: type must be one of %s" % (pid, ", ".join(PRINTER_TYPES)))
+        if ptype == "marlin_serial" and not str(p.get("host", "")).strip():
+            p["host"] = "localhost"  # USB printer on this PC: there is no network address
         host = str(p.get("host", "")).strip()
         if not HOST_RE.match(host):
             raise ConfigError("%s: host must be an IP address or hostname" % pid)
         p["host"] = host
         p["name"] = str(p.get("name") or pid).strip()[:64]
+        for key in TEXT_FIELDS:
+            value = str(p.get(key) or "").strip()[:64]
+            if value:
+                p[key] = value
+            else:
+                p.pop(key, None)
+        for field in SECRET_FIELDS:
+            env = str(p.get(field + "_env") or "").strip()
+            if env:
+                if not ENV_RE.match(env):
+                    raise ConfigError("%s: %s_env must be an environment variable name" % (pid, field))
+                p[field + "_env"] = env
+            else:
+                p.pop(field + "_env", None)
 
         webcam = str(p.get("webcam_url") or "").strip()
         if webcam:
@@ -109,26 +141,56 @@ def _validate(raw):
         else:
             p.pop("webcam_url", None)
 
-        if p["type"] == "klipper":
+        if ptype in HTTP_TYPES:
             p["http_port"] = int(p.get("http_port", 80))
             if not 1 <= p["http_port"] <= 65535:
                 raise ConfigError("%s: http_port out of range" % pid)
-            if p.get("ui_port") not in (None, ""):
-                p["ui_port"] = _port(p["ui_port"], "%s ui_port" % pid)
-                if p["ui_port"] in used_ports:
-                    raise ConfigError("%s: ui_port %d is already used" % (pid, p["ui_port"]))
-                used_ports.add(p["ui_port"])
-            else:
-                p.pop("ui_port", None)
+        else:
+            p.pop("http_port", None)
+        if ptype == "klipper" and p.get("ui_port") not in (None, ""):
+            p["ui_port"] = _port(p["ui_port"], "%s ui_port" % pid)
+            if p["ui_port"] in used_ports:
+                raise ConfigError("%s: ui_port %d is already used" % (pid, p["ui_port"]))
+            used_ports.add(p["ui_port"])
         else:
             p.pop("ui_port", None)
-            if not (p.get("access_code") or p.get("access_code_protected")):
+        if ptype == "klipper":
+            p["websocket"] = bool(p.get("websocket", True))
+        if ptype == "octoprint" and not _has_secret(p, "api_key"):
+            raise ConfigError("%s: OctoPrint needs an API key (OctoPrint settings > Application Keys)" % pid)
+        if ptype == "prusalink":
+            if not (_has_secret(p, "password") or _has_secret(p, "api_key")):
+                raise ConfigError("%s: PrusaLink needs its password (printer screen: Settings > Network)" % pid)
+            p["username"] = str(p.get("username") or "maker").strip()[:64]
+        if ptype == "marlin_serial":
+            port = str(p.get("serial_port") or "").strip()
+            if not SERIAL_PORT_RE.match(port):
+                raise ConfigError("%s: serial_port must look like COM3 or /dev/ttyUSB0" % pid)
+            p["serial_port"] = port
+            baud = int(p.get("baudrate", 115200))
+            if baud not in BAUD_RATES:
+                raise ConfigError("%s: baudrate must be one of %s" % (pid, ", ".join(map(str, BAUD_RATES))))
+            p["baudrate"] = baud
+        if ptype == "bambu":
+            if not _has_secret(p, "access_code"):
                 raise ConfigError("%s: Bambu printers need the LAN access code" % pid)
             serial = str(p.get("serial", "")).strip()
             if serial and not re.match(r"^[A-Za-z0-9]{6,32}$", serial):
                 raise ConfigError("%s: serial looks wrong" % pid)
             p["serial"] = serial
             p["use_ams"] = bool(p.get("use_ams", False))
+            mode = p.get("mode") or "read_only"
+            if mode not in BAMBU_MODES:
+                raise ConfigError("%s: mode must be read_only or control" % pid)
+            p["mode"] = mode
+            for key, default in (("mqtt_port", 8883), ("camera_port", 6000), ("ftps_port", 990)):
+                p[key] = int(p.get(key) or default)
+                if not 1 <= p[key] <= 65535:
+                    raise ConfigError("%s: %s out of range" % (pid, key))
+        for key in ("allow_remote_control", "allow_file_upload"):
+            p[key] = bool(p.get(key, CONTROL_DEFAULT[ptype]))
+        if ptype == "bambu" and p["mode"] == "read_only":
+            p["allow_remote_control"] = p["allow_file_upload"] = False
 
         rotate = int(p.get("rotate", 0) or 0)
         if rotate not in (0, 90, 180, 270):
@@ -139,8 +201,42 @@ def _validate(raw):
         printers.append(p)
     cfg["printers"] = printers
     cfg["notifications"] = _validate_notifications(cfg.get("notifications"))
+    _validate_auth(cfg)
     cfg.pop("cloud", None)  # the Cloudflare dashboard was removed in 1.5.0; its old settings are dropped
     return cfg
+
+
+def _validate_auth(cfg):
+    from . import auth
+    ro = cfg.get("read_only_users") or []
+    if not isinstance(ro, list) or not all(isinstance(u, str) for u in ro):
+        raise ConfigError("read_only_users must be a list of login names")
+    cfg["read_only_users"] = sorted({u.strip().lower() for u in ro if u.strip()})
+    a = cfg.get("auth") if isinstance(cfg.get("auth"), dict) else {}
+    mode = a.get("mode") or "tailscale"
+    if mode not in auth.MODES:
+        raise ConfigError("auth mode must be one of %s" % ", ".join(auth.MODES))
+    hours = int(a.get("session_hours") or 12)
+    if not 1 <= hours <= 720:
+        raise ConfigError("session_hours must be between 1 and 720")
+    cfg["auth"] = {"mode": mode, "session_hours": hours}
+    users, names = [], set()
+    for u in cfg.get("users") or []:
+        if not isinstance(u, dict):
+            raise ConfigError("users must be a list of objects")
+        name = str(u.get("name") or "").strip().lower()
+        if not auth.USER_RE.match(name) or name in names:
+            raise ConfigError("user name '%s' is invalid or used twice" % name)
+        names.add(name)
+        if not str(u.get("password_hash") or "").startswith("pbkdf2_sha256$"):
+            raise ConfigError("user %s: password_hash missing (use run.py --add-user)" % name)
+        role = u.get("role") or "operator"
+        if role not in auth.ROLES:
+            raise ConfigError("user %s: role must be admin, operator or viewer" % name)
+        users.append({"name": name, "password_hash": u["password_hash"], "role": role})
+    cfg["users"] = users
+    if "password" in mode and not users:
+        raise ConfigError("auth mode %s needs at least one user: run  py run.py --add-user NAME" % mode)
 
 
 def _validate_notifications(raw):
@@ -191,8 +287,18 @@ def protect_secrets(cfg):
     return changed
 
 
+def _has_secret(p, field):
+    return bool(p.get(field) or p.get(field + "_protected") or p.get(field + "_env"))
+
+
 def secret(printer, field):
-    """Plain-text secret for printer, decrypted on demand."""
+    """Plain-text secret for printer, decrypted on demand.
+
+    Order: plain value, DPAPI-encrypted value, then the environment variable named in
+    `<field>_env` (for Linux/macOS or containers, where DPAPI is not available)."""
+    env = printer.get(field + "_env")
+    if env and not printer.get(field) and not printer.get(field + "_protected"):
+        return os.environ.get(env, "")
     if printer.get(field):
         return str(printer[field])
     token = printer.get(field + "_protected")

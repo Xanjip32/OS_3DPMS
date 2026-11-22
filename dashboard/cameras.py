@@ -218,7 +218,7 @@ def _rtsp_only(host):
         return False
 
 
-def bambu_camera(hub, host, access_code, pins):
+def bambu_camera(hub, host, access_code, pins, port=6000):
     """P1/A1 camera: TLS port 6000, 80-byte auth packet, then JPEGs with a 16-byte header.
 
     The header starts with the picture size (little endian). Headers with size 0 are
@@ -227,13 +227,13 @@ def bambu_camera(hub, host, access_code, pins):
     if not access_code:
         raise ConnectionError("no LAN access code saved for this printer")
     try:
-        s = tlspin.connect(host, 6000, pins)
+        s = tlspin.connect(host, port, pins)
     except ConnectionRefusedError:
         if _rtsp_only(host):
             raise ConnectionError("this printer streams its camera over RTSP (port 322; X1, H2D and P2S "
                                   "models). Run a camera bridge such as go2rtc on this PC and enter its "
                                   "MJPEG or JPEG address as Camera URL override") from None
-        raise ConnectionError("printer refused the camera port 6000. Turn on LAN Mode Liveview "
+        raise ConnectionError("printer refused the camera port %d. Turn on" % port + " LAN Mode Liveview "
                               "on the printer screen") from None
     with s:
         auth = struct.pack("<IIII", 0x40, 0x3000, 0, 0)

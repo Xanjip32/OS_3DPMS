@@ -36,8 +36,8 @@ def base_url(p):
     return "http://%s/" % p["host"] if port == 80 else "http://%s:%d/" % (p["host"], port)
 
 
-def http_json(p, path, timeout=5):
-    req = urllib.request.Request(urllib.parse.urljoin(base_url(p), path))
+def http_json(p, path, timeout=5, method="GET", data=None):
+    req = urllib.request.Request(urllib.parse.urljoin(base_url(p), path), method=method, data=data)
     key = config.secret(p, "api_key")
     if key:
         req.add_header("X-Api-Key", key)
