@@ -604,6 +604,7 @@ async function openPrinterDialog(id) {
   $('printer-allow-upload').checked = editing ? !!editing.allow_file_upload : defaultAllow;
   $('printer-allow-control').checked = editing ? !!editing.allow_remote_control : defaultAllow;
   $('printer-autostart').checked = !!editing?.auto_start;
+  $('printer-camera-on').checked = !!editing?.camera_always_on;
   $('printer-require-removal').checked = editing ? editing.bed_check_require_removal !== false : true;
   $('printer-threshold').value = editing?.bed_check_threshold ?? '';
   $('printer-frames').value = editing?.bed_check_frames ?? '';
@@ -627,7 +628,8 @@ $('printer-form').addEventListener('submit', async e => {
       rotate: Number($('printer-rotate').value), location: $('printer-location').value.trim(),
       allow_file_upload: $('printer-allow-upload').checked, allow_remote_control: $('printer-allow-control').checked,
       auto_start: $('printer-autostart').checked, bed_check_require_removal: $('printer-require-removal').checked,
-      bed_check_roi: $('printer-roi').value.trim() || '0, 0, 1, 1' };
+      bed_check_roi: $('printer-roi').value.trim() || '0, 0, 1, 1',
+      camera_always_on: $('printer-camera-on').checked };
     if ($('printer-threshold').value) fields.bed_check_threshold = Number($('printer-threshold').value);
     if ($('printer-frames').value) fields.bed_check_frames = Number($('printer-frames').value);
     if (type === 'bambu') {
