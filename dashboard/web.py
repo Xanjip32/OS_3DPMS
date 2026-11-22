@@ -139,7 +139,8 @@ class App:
         self.manager = PrinterManager(self.pins)
         self.history = JobHistory(os.path.join(data_dir, "history.json"))
         self.sessions = auth.Sessions()
-        self.login_limiter = auth.RateLimiter(5, 15 * 60)      # 5 wrong passwords per 15 minutes
+        self.login_limiter = auth.RateLimiter(5, 15 * 60)      # 5 attempts per 15 minutes per source+account
+        self.account_limiter = auth.RateLimiter(20, 15 * 60)   # and 20 per account from everywhere together
         self.control_limiter = auth.RateLimiter(30, 60)        # 30 printer actions a minute per user
         self.monitor = None
         self.notifier = notify.Notifier(self)
@@ -566,7 +567,7 @@ class Handler(BaseHTTPRequestHandler):
         name = str((payload or {}).get("user") or "").strip().lower()[:64]
         password = str((payload or {}).get("password") or "")[:256]
         key = "%s|%s" % (self.tailscale_identity() or "local", name)
-        if not self.app.login_limiter.allow(key) or not self.app.login_limiter.allow("*|" + name):
+        if not self.app.login_limiter.allow(key) or not self.app.account_limiter.allow(name):
             self.app.audit(name, "login", result="rate-limited")
             return self.send_json(429, {"error": "Too many attempts. Wait 15 minutes."})
         user = next((u for u in self.app.cfg.get("users", []) if u["name"] == name), None)
@@ -574,6 +575,7 @@ class Handler(BaseHTTPRequestHandler):
             self.app.audit(name, "login", result="wrong-password")
             return self.send_json(401, {"error": "Wrong user name or password."})
         self.app.login_limiter.reset(key)
+        self.app.account_limiter.reset(name)
         token = self.app.sessions.create(user["name"], user["role"])
         self.app.audit(user["name"], "login", result="ok")
         hours = self.app.cfg["auth"]["session_hours"]

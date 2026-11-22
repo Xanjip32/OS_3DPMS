@@ -43,6 +43,14 @@ a user's browser, and the printers' network traffic.
 | Notification secrets leaked | ntfy links/tokens, Discord webhooks and Telegram tokens are DPAPI-encrypted and never returned to the browser. |
 | Camera pictures leaving the network | Attaching pictures to notifications is off by default and labelled on the setup page. |
 | Notification spam / mentions | At most 20 messages a minute; Discord mentions (`@everyone`) are disabled. |
+| Viewers acting on printers | `read_only_users` (Tailscale) and the `viewer` role (password login) may watch only; every upload/control route checks this on the server, not just in the UI. |
+| Brute-forcing a dashboard password | PBKDF2-SHA256 with 310 000 iterations and a per-user salt, minimum 10 characters, constant-time compare; 5 attempts per 15 minutes per source and account and 20 per account; failures are audited. Sessions are random 256-bit tokens in HttpOnly, SameSite=Strict cookies (Secure on `*.ts.net`), kept in memory only. |
+| Accidental cancel / start | Cancel and start need `{"confirm": "<printer id>"}` (HTTP 428 otherwise) and a confirmation in the dashboard; start is refused while the printer prints or is paused; control is rate limited (30 a minute per user). |
+| Arbitrary G-code / settings changes | No endpoint accepts G-code or temperature/settings changes. Marlin serial sends only a fixed allowlist of read commands. Bambu settings (LAN, cloud, Developer Mode) are never touched. |
+| Unwanted control of Bambu printers | Bambu printers are read-only by default (`mode: read_only` sends no commands); control needs `mode: control` and the per-printer `allow_*` switches. |
+| Overwriting printer files | An upload whose name already exists on the printer or in Files returns 409 until the user confirms overwrite. |
+| SSRF through new adapters | OctoPrint / PrusaLink / Moonraker requests and camera links stay on the configured printer host; e-mail uses verified TLS (plain SMTP only to localhost). |
+| Secrets on Linux/macOS | `<field>_env` reads a secret from an environment variable instead of `config.json`. |
 | No accountability | `audit.log` records the Tailscale user, printer, file and result of every upload, config change and publish. |
 
 ## Known limits
@@ -52,9 +60,11 @@ a user's browser, and the printers' network traffic.
 - By default Moonraker trusts every private network address, so anyone on the LAN (and anyone
   who may open Mainsail through the dashboard) controls the printer. `tools/secure_printers.py`
   trusts only the printer itself and requires a Mainsail login; OS_3DPMS then uses the API key.
-- G-code is not inspected. A user who may upload can send any G-code.
-- Bambu printers are not status-checked before starting a print; the printer itself refuses a
-  new job while busy.
+- G-code files are not inspected. A user who may upload can send a file containing any G-code.
+- Password sessions are lost on restart (by design) and are not bound to an IP address.
+- PrusaLink Digest authentication uses MD5 (the printer's protocol); keep it on a trusted LAN.
+- Bambu status is checked before an upload with start; if the printer gives no status, the
+  printer itself refuses a new job while busy.
 - Notification text (printer name, file name) is sent to the notification service you choose.
   Anyone who knows an ntfy.sh topic name can read it; use the generated private topic.
 - Processes running as the same Windows user can read the DPAPI-protected secrets.

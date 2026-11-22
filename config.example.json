@@ -9,7 +9,8 @@
       "name": "Voron 500",
       "type": "klipper",
       "host": "192.168.1.21",
-      "ui_port": 8101
+      "ui_port": 8101,
+      "location": "Office"
     },
     {
       "id": "sapphire-pro",
@@ -17,7 +18,10 @@
       "type": "klipper",
       "host": "192.168.1.22",
       "ui_port": 8102,
-      "rotate": 180
+      "rotate": 180,
+      "location": "Office",
+      "manufacturer": "Two Trees",
+      "model": "Sapphire Pro"
     },
     {
       "id": "p1s",
@@ -26,7 +30,44 @@
       "host": "192.168.1.6",
       "access_code": "YOUR-ACCESS-CODE",
       "serial": "",
-      "use_ams": false
+      "use_ams": false,
+      "mode": "read_only",
+      "location": "Office",
+      "allow_file_upload": false,
+      "allow_remote_control": false
+    },
+    {
+      "id": "kossel",
+      "name": "Kossel",
+      "type": "octoprint",
+      "host": "192.168.1.30",
+      "http_port": 80,
+      "api_key": "YOUR-OCTOPRINT-API-KEY",
+      "location": "Lab",
+      "manufacturer": "Anycubic",
+      "model": "Kossel Linear Plus"
+    },
+    {
+      "id": "mk4",
+      "name": "Prusa MK4",
+      "type": "prusalink",
+      "host": "192.168.1.31",
+      "username": "maker",
+      "password": "PRINTER-SCREEN-PASSWORD",
+      "location": "Lab"
+    },
+    {
+      "id": "ender-usb",
+      "name": "Ender 3 (USB)",
+      "type": "marlin_serial",
+      "serial_port": "COM3",
+      "baudrate": 115200,
+      "location": "Lab"
     }
-  ]
+  ],
+  "read_only_users": [],
+  "auth": {
+    "mode": "tailscale",
+    "session_hours": 12
+  }
 }

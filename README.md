@@ -16,8 +16,14 @@ internet. Phone alerts while the app is closed come through ntfy, Discord or Tel
 
 Works with a mix of printers:
 
-- **Klipper printers** with Mainsail or Fluidd (Moonraker API): Voron, Two Trees Sapphire, RatRig, Creality with Klipper, and others
-- **Bambu Lab** P1S / P1P / A1 / X1 in LAN mode
+- **Klipper printers** with Mainsail or Fluidd (Moonraker API, live over WebSocket): Voron, Two Trees Sapphire, RatRig, Creality with Klipper, and others
+- **Bambu Lab** P1S / P1P / A1 / X1 in LAN mode, **read-only by default**
+- **Marlin printers through OctoPrint** (REST API key), for example an Anycubic Kossel
+- **Prusa printers with PrusaLink** (MK4, XL, MINI; experimental)
+- **Marlin printers on USB serial** (monitor only, needs `pip install pyserial`)
+
+Each protocol is an adapter with its own capabilities: the dashboard only offers what that
+printer supports and what you allowed. See [docs/ADAPTERS.md](docs/ADAPTERS.md).
 
 ## Features
 
@@ -39,13 +45,21 @@ Works with a mix of printers:
   Tailscale for the accounts listed in Setup → *Allowed Tailscale accounts*
 - Queue page: **+ Add job** picks a printer and a file from Files, or uploads a new one
 - Remote access over Tailscale, set up from the setup page, with a QR code to open it on a phone
-- Print status and progress for Klipper and Bambu printers
-- Notifications when a print finishes, fails, pauses or a printer goes offline: pop-ups in the
-  dashboard, and on your phone through ntfy, Discord or Telegram
+- Print status, progress, temperatures, layer, remaining time and printer warnings for every
+  printer type; **Details** shows a 30-minute temperature chart, diagnostics and print history
+- **Pause / Resume / Cancel** on the card for printers that allow it (cancel asks first);
+  read-only accounts and read-only printers only watch
+- Locations: give printers a `location` and filter the dashboard by room or site
+- Concurrent monitoring: an offline printer never slows down the others
+- Optional password login with admin / operator / viewer roles, on top of or instead of
+  Tailscale identity
+- Notifications when a print finishes, fails, pauses, a printer goes offline or comes back, or
+  reports a warning: pop-ups in the dashboard, and ntfy, Discord, Telegram or e-mail
 - Per-camera rotation and mirroring
 - Hide cameras you do not need on a device (× button), and show them again from the top bar
 - Guided setup for adding printers and checking their cameras
-- Python standard library only: no packages to install, small attack surface
+- Python standard library only: no packages to install, small attack surface (pyserial only for
+  Marlin USB serial)
 
 ## Quick start (Windows)
 
@@ -149,7 +163,37 @@ alert opens your dashboard (over Tailscale).
   and your chat id (for example from @userinfobot).
 
 Choose which events notify you. "Attach a camera picture" is off by default, because the
-picture is then stored by the notification service.
+picture is then stored by the notification service. E-mail (SMTP) is set in `config.json`: see
+[docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
+
+## Other printer types
+
+Add these in **Devices → + Add printer** (or in `config.json`):
+
+- **OctoPrint:** IP, port and an API key (OctoPrint → Settings → Application Keys).
+- **PrusaLink:** IP, user `maker` and the password from the printer screen (Settings → Network).
+- **Marlin USB serial:** the COM port and baud rate. Close other programs using the port first.
+  Monitor only: no uploads or print control over raw serial.
+- **Bambu modes:** new and existing Bambu printers start in **read-only** mode (status and camera,
+  no commands). Set *Mode* to *Control* and tick the switches to allow uploads and
+  start / pause / resume / stop. See [docs/BAMBU.md](docs/BAMBU.md).
+
+Before trusting a new printer, follow the safe first-connection steps in
+[docs/ADAPTERS.md](docs/ADAPTERS.md#safe-first-connection-sapphire-pro-kossel-bambu-p1s).
+
+## Password login (optional)
+
+Tailscale identity is the default. To also (or instead) require a dashboard password:
+
+```bash
+py run.py --add-user alice --role admin        # asks for the password (min. 10 characters)
+py run.py --add-user viewer1 --role viewer
+py run.py --remove-user viewer1
+```
+
+Then set `"auth": {"mode": "tailscale+password"}` (both) or `"password"` in `config.json` and
+restart. Roles: **admin** and **operator** may upload and control, **viewer** only watches. The
+Setup page on the PC itself never asks for a password. Details: [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md).
 
 ## Configuration
 
@@ -162,9 +206,16 @@ The setup page writes `config.json`. Settings that are only in the file:
 | `max_upload_mb` | `1024` | Largest accepted G-code file |
 | `allowed_users` | `[]` | Tailscale logins allowed in; empty = everyone in your tailnet |
 | `require_tailscale_identity` | `true` | Refuse requests without a Tailscale user (for example tagged devices) |
+| `read_only_users` | `[]` | Tailscale logins that may watch but not upload or control |
+| `auth` | `{"mode": "tailscale"}` | `tailscale`, `password` or `tailscale+password`; `session_hours` (default 12) |
+| `users` | `[]` | Dashboard accounts (hashes only); manage with `run.py --add-user` / `--remove-user` |
 
-Per printer: `webcam_url` (override the camera URL), `rotate` (0/90/180/270),
-`flip_horizontal`, `flip_vertical`, `http_port`.
+Per printer: `type` (`klipper`, `bambu`, `octoprint`, `prusalink`, `marlin_serial`),
+`webcam_url` (override the camera URL), `rotate` (0/90/180/270), `flip_horizontal`,
+`flip_vertical`, `http_port`, `location`, `manufacturer`, `model`, `allow_file_upload`,
+`allow_remote_control`; Bambu `mode` (`read_only` / `control`); serial `serial_port`, `baudrate`.
+Secrets (`api_key`, `access_code`, `password`) can be read from an environment variable with
+`<field>_env` on Linux/macOS. All fields per type: [docs/ADAPTERS.md](docs/ADAPTERS.md).
 
 See [`config.example.json`](config.example.json).
 
@@ -182,19 +233,30 @@ Read [SECURITY.md](SECURITY.md) for the full threat model. In short:
 - Secrets are encrypted at rest with Windows DPAPI and never sent to the browser.
 - Bambu TLS certificates are pinned on first use.
 - Upload size limit, one upload per printer at a time, connection cap and timeouts.
-- Every upload, config change and publish is written to `audit.log` with the Tailscale user.
+- Every upload, control action, login, config change and publish is written to `audit.log`.
+- Optional password login (PBKDF2, HttpOnly SameSite cookies, login rate limiting), roles, and
+  confirmation for cancel/start. No endpoint accepts arbitrary G-code.
+- Bambu printers are read-only until you switch them to control mode.
 
 ## Development
 
 ```bash
-python -m unittest discover -s tests -t . -v   # tests use a fake Moonraker printer
+python -m unittest discover -s tests -t . -v   # or: python -m pytest -q
+ruff check --select E9,F,B --target-version py38 .
 python tests/mock_printer.py 9001              # fake printer for UI work
 ```
+
+The tests run against simulated printers only (fake Moonraker with WebSocket, OctoPrint,
+PrusaLink, Marlin serial, Bambu reports, and a 15-printer fleet); they never contact real printers.
 
 Project layout:
 
 ```
 dashboard/   server code (web.py = HTTP server, klipper.py, bambu.py, cameras.py, tailscale.py, ...)
+  adapters/  one adapter per printer protocol (moonraker, bambu, octoprint, prusalink, marlin_serial)
+  services/  printer manager (adapters per printer) and job history
+  auth.py    optional password login, sessions, rate limits
+docs/        ADAPTERS, BAMBU, REMOTE_ACCESS, NOTIFICATIONS, MCP (design), DECISIONS, ASSESSMENT
 web/         dashboard and setup pages (HTML/CSS/JS, no build step)
 tests/       unit and integration tests, fake printer
 scripts/     helper scripts used by the .bat files

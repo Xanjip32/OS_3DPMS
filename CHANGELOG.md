@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Universal printer adapters (branch `feature/universal-adapters`)
+
+- **Breaking for Bambu remote control:** Bambu printers are now **read-only by default**, also
+  printers saved by older versions (status, temperatures, AMS, HMS and camera work; no commands
+  are sent). To upload or start/pause/stop remotely set *Mode → Control* and tick the switches in
+  Devices (`"mode": "control"`, `"allow_file_upload"`, `"allow_remote_control"`)
+- New printer types: **OctoPrint** (Marlin), **PrusaLink** (experimental), **Marlin USB serial**
+  (monitor only; optional `pyserial`). Every printer type goes through an adapter with capability
+  detection (`dashboard/adapters/`, see `docs/ADAPTERS.md`)
+- **Klipper live over WebSocket**: Moonraker object discovery, subscription with delta merging,
+  heartbeat and reconnect with backoff, HTTP fallback; Klippy shutdown/error shows as an error
+- Cards show **temperatures**, layer and remaining time, printer warnings, and **Pause / Resume /
+  Cancel** where the printer allows it (cancel asks first). **Details** opens a 30-minute
+  temperature chart, diagnostics and print history
+- **Locations**: `location`, `manufacturer`, `model` per printer and a location filter
+- **Concurrent monitoring** with per-printer timeouts and backoff: offline printers no longer
+  slow down the others
+- New notifications: printer **reconnected** and printer **warnings** (Bambu HMS, filament/AMS);
+  **e-mail (SMTP)** channel (config file only, `docs/NOTIFICATIONS.md`)
+- **Job history** (`history.json`): finished, failed and cancelled prints per printer
+- Optional **password login** (`auth.mode`: `tailscale`, `password`, `tailscale+password`) with
+  `admin` / `operator` / `viewer` roles, `run.py --add-user` / `--remove-user`, login rate
+  limiting; `read_only_users` for Tailscale accounts that may only watch
+- New API: `/api/printers/<id>` (+ `/diagnostics`, `/history`, `/files`, `/temperatures`),
+  `POST /api/printers/<id>/pause|resume|cancel|start` (cancel/start need a confirmation),
+  `/api/locations`, `/api/history`
+- Uploads check the file type per printer (`.3mf` only for Bambu, `.bgcode` for PrusaLink) and
+  ask before overwriting an existing file
+- Secrets can come from environment variables (`api_key_env`, `access_code_env`, ...)
+- Fixed a flaky Mainsail forward test (port reuse race)
+- Docs: `docs/ASSESSMENT.md`, `ADAPTERS.md`, `BAMBU.md`, `REMOTE_ACCESS.md`, `NOTIFICATIONS.md`,
+  `MCP.md` (design only), `DECISIONS.md`
+
+### Earlier unreleased changes
+
 - **Bambu print start is confirmed**: OS_3DPMS waits for the printer to accept the print and shows
   its reason when it refuses (newer firmware: turn on LAN Only Mode and Developer Mode), instead of
   always saying "print started". A queued job whose start is refused now stays in the Queue
