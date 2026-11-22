@@ -9,6 +9,7 @@ import os
 import re
 import socket
 import threading
+import time
 
 log = logging.getLogger("dashboard.forward")
 FORBIDDEN = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -40,12 +41,17 @@ class Forwarder:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if os.name != "nt":  # on Windows SO_REUSEADDR lets two processes share a port
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            s.bind((self.listen_host, self.listen_port))
-            s.listen(64)
-        except OSError:
-            s.close()
-            raise
+        for attempt in range(15):
+            try:
+                s.bind((self.listen_host, self.listen_port))
+                s.listen(64)
+                break
+            except OSError:
+                # After a settings reload the previous forwarder may need a moment to let go of the port.
+                if attempt == 14:
+                    s.close()
+                    raise
+                time.sleep(0.1)
         s.settimeout(1.0)
         self.sock = s
         threading.Thread(target=self._accept, daemon=True).start()
@@ -54,6 +60,10 @@ class Forwarder:
     def stop(self):
         self.closed = True
         if self.sock:
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)  # wakes a blocked accept() so the port is freed now
+            except OSError:
+                pass
             self.sock.close()
 
     def _accept(self):
