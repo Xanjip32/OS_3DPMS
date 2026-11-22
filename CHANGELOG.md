@@ -38,6 +38,20 @@
   `orca-plugin-v*` releases, off until the repository variable `ORCACLOUD_PUBLISH` is `true`
 - Docs: [docs/ORCA_PLUGIN.md](docs/ORCA_PLUGIN.md)
 
+### Webcam (branch `feature/bed-check-orca-plugin`)
+
+- `camera.remote_max_fps` (default 5, as before): picture cap for remote viewers is now a
+  setting, and paced by time, so the newest picture is sent when one is due (no fixed sleep after
+  each picture)
+- JPEG snapshot cameras are polled over one kept-alive HTTP connection every
+  `camera.snapshot_interval_s` (default 0.2 s) instead of a new connection plus a fixed sleep;
+  a camera that closes the connection, or answers oddly, falls back to a plain request
+- MJPEG streams: the part's `Content-Length` is used when present, so a picture with an embedded
+  thumbnail is no longer cut short; without it (or when it does not match) the start/end markers
+  are used as before
+- `camera.idle_seconds` (default 20) and per-printer `camera_always_on` (Devices dialog: *Keep the
+  camera connected without viewers*), useful for the bed check
+
 ### Universal printer adapters (branch `feature/universal-adapters`)
 
 - **Breaking for Bambu remote control:** Bambu printers are now **read-only by default**, also

@@ -36,6 +36,7 @@ DEFAULTS = {
     "auth": {"mode": "tailscale"},  # see dashboard/auth.py
     "users": [],                    # dashboard accounts for password login (hashes only)
     "api_tokens": [],               # tokens for programs (Orca Slicer plugin): SHA-256 only
+    "camera": {},                   # remote_max_fps, snapshot_interval_s, idle_seconds (CAMERA_DEFAULTS)
 }
 
 NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline", "reconnected", "warning",
@@ -205,13 +206,39 @@ def _validate(raw):
         p["rotate"] = rotate
         p["flip_horizontal"] = bool(p.get("flip_horizontal", False))
         p["flip_vertical"] = bool(p.get("flip_vertical", False))
+        p["camera_always_on"] = bool(p.get("camera_always_on", False))
         bedcheck.validate_printer(p, pid)
         printers.append(p)
     cfg["printers"] = printers
     cfg["notifications"] = _validate_notifications(cfg.get("notifications"))
+    cfg["camera"] = _validate_camera(cfg.get("camera"))
     _validate_auth(cfg)
     cfg.pop("cloud", None)  # the Cloudflare dashboard was removed in 1.5.0; its old settings are dropped
     return cfg
+
+
+CAMERA_DEFAULTS = {"remote_max_fps": 5, "snapshot_interval_s": 0.2, "idle_seconds": 20}
+CAMERA_LIMITS = {"remote_max_fps": (1, 30), "snapshot_interval_s": (0.05, 10), "idle_seconds": (5, 3600)}
+
+
+def _validate_camera(raw):
+    """Global camera settings: frame cap for remote viewers, snapshot polling, idle stop."""
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigError("camera must be an object")
+    out = {}
+    for key, default in CAMERA_DEFAULTS.items():
+        value = raw.get(key, default)
+        lo, hi = CAMERA_LIMITS[key]
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            raise ConfigError("camera.%s must be a number" % key) from None
+        if isinstance(raw.get(key), bool) or not lo <= value <= hi:
+            raise ConfigError("camera.%s must be between %s and %s" % (key, lo, hi))
+        out[key] = value if key == "snapshot_interval_s" else int(round(value)) if key == "idle_seconds" else value
+    return out
 
 
 def _validate_auth(cfg):

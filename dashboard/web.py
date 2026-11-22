@@ -74,7 +74,9 @@ EDITABLE_FIELDS = ("id", "name", "type", "host", "ui_port", "http_port", "webcam
                    "camera_port", "ftps_port", "access_code_env", "api_key_env", "password_env",
                    # bed check and auto-start of the next queued job (1.6)
                    "auto_start", "bed_check_threshold", "bed_check_tolerance", "bed_check_frames",
-                   "bed_check_roi", "bed_check_require_removal")
+                   "bed_check_roi", "bed_check_require_removal",
+                   # webcam (1.6)
+                   "camera_always_on")
 TOKEN_USER = "token:"         # identity prefix of requests with an API token (Orca Slicer plugin)
 PLUGIN_ACTIONS = ("queue", "send", "print")
 AUTO_USER = "auto-start"       # audit log and history name for jobs the queue starts by itself
@@ -304,8 +306,14 @@ class App:
             self.manager.load(cfg["printers"])  # one adapter per printer; Bambu ones start their MQTT watcher
             self.cfg = cfg
             self.printers = {p["id"]: p for p in cfg["printers"]}
-            self.hubs = {pid: cameras.CameraHub(pid, self._camera_source(p))
+            cam = cfg["camera"]
+            self.hubs = {pid: cameras.CameraHub(pid, self._camera_source(p), idle_seconds=cam["idle_seconds"],
+                                                always_on=p["camera_always_on"],
+                                                snapshot_interval=cam["snapshot_interval_s"])
                          for pid, p in self.printers.items()}
+            for hub in self.hubs.values():
+                if hub.always_on:
+                    hub.touch()
             self.upload_locks = {pid: threading.Lock() for pid in self.printers}
             if any(p["type"] == "bambu" and not p.get("serial") for p in cfg["printers"]):
                 self.bambu_listener.listen(600)  # learn the serial number from the printer itself
@@ -1163,19 +1171,24 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.end_headers()
         last = 0.0
-        # Remote viewers (over Tailscale, often on a phone) get at most 5 pictures a second: a full
-        # camera rate would overrun mobile links and drop frames. The PC itself gets every picture.
-        gap = 0.0 if self.admin else 0.2
+        # Remote viewers (over Tailscale, often on a phone) get at most camera.remote_max_fps
+        # pictures a second (default 5): a full camera rate would overrun mobile links. When a
+        # picture is due, the newest one is sent. The PC itself gets every picture.
+        gap = 0.0 if self.admin else 1.0 / self.app.cfg["camera"]["remote_max_fps"]
+        due = 0.0
         while True:
             hub.touch()
             frame, ts = hub.wait_frame(last, 30)
             if frame is None or ts == last:
                 return  # camera gone or printer removed
+            wait = due - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+                frame, ts = hub.latest()
             last = ts
             self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n"
                              % len(frame) + frame + b"\r\n")
-            if gap:
-                time.sleep(gap)
+            due = time.monotonic() + gap
 
     def send_qr(self):
         """QR code of the Tailscale dashboard link, for phones to scan from the Setup page."""

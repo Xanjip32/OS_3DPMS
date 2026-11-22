@@ -225,12 +225,13 @@ The setup page writes `config.json`. Settings that are only in the file:
 | `read_only_users` | `[]` | Tailscale logins that may watch but not upload or control |
 | `auth` | `{"mode": "tailscale"}` | `tailscale`, `password` or `tailscale+password`; `session_hours` (default 12) |
 | `users` | `[]` | Dashboard accounts (hashes only); manage with `run.py --add-user` / `--remove-user` |
+| `camera` | `{}` | `remote_max_fps` (1–30, default 5): picture cap for viewers over Tailscale, the PC itself gets every picture; `snapshot_interval_s` (0.05–10, default 0.2): wait between pictures from a JPEG snapshot URL (one kept-alive connection); `idle_seconds` (5–3600, default 20): camera connection closes this long after the last viewer |
 | `api_tokens` | `[]` | API tokens for programs such as the Orca Slicer plugin (hashes only); manage on the Setup page or with `run.py --add-token NAME [--role viewer]` / `--remove-token NAME` |
 
 Per printer: `type` (`klipper`, `bambu`, `octoprint`, `prusalink`, `marlin_serial`),
 `webcam_url` (override the camera URL), `rotate` (0/90/180/270), `flip_horizontal`,
 `flip_vertical`, `http_port`, `location`, `manufacturer`, `model`, `allow_file_upload`,
-`allow_remote_control`; Bambu `mode` (`read_only` / `control`); serial `serial_port`, `baudrate`;
+`allow_remote_control`, `camera_always_on` (keep the camera connected without viewers); Bambu `mode` (`read_only` / `control`); serial `serial_port`, `baudrate`;
 bed check `auto_start`, `bed_check_threshold`, `bed_check_tolerance`, `bed_check_frames`,
 `bed_check_roi`, `bed_check_require_removal` ([docs/BED_CHECK.md](docs/BED_CHECK.md)).
 Secrets (`api_key`, `access_code`, `password`) can be read from an environment variable with
