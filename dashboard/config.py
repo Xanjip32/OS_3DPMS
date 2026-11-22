@@ -5,7 +5,7 @@ import os
 import re
 import urllib.parse
 
-from . import winsecret
+from . import bedcheck, winsecret
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 HOST_RE = re.compile(r"^[A-Za-z0-9.\-]{1,253}$")
@@ -37,8 +37,10 @@ DEFAULTS = {
     "users": [],                    # dashboard accounts for password login (hashes only)
 }
 
-NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline", "reconnected", "warning")
-NOTIFY_DEFAULT_ON = ("complete", "error", "paused", "offline", "reconnected", "warning")
+NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline", "reconnected", "warning",
+                 "auto_started", "bed_not_clear")
+NOTIFY_DEFAULT_ON = ("complete", "error", "paused", "offline", "reconnected", "warning", "auto_started",
+                     "bed_not_clear")
 NOTIFY_SECRETS = ("ntfy_url", "ntfy_token", "discord_webhook", "telegram_token", "smtp_password")
 # E-mail is set in config.json only (see docs/NOTIFICATIONS.md); the Setup page keeps these as they are.
 EMAIL_FIELDS = ("smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_from", "smtp_to")
@@ -202,6 +204,7 @@ def _validate(raw):
         p["rotate"] = rotate
         p["flip_horizontal"] = bool(p.get("flip_horizontal", False))
         p["flip_vertical"] = bool(p.get("flip_vertical", False))
+        bedcheck.validate_printer(p, pid)
         printers.append(p)
     cfg["printers"] = printers
     cfg["notifications"] = _validate_notifications(cfg.get("notifications"))

@@ -602,6 +602,11 @@ async function openPrinterDialog(id) {
   const defaultAllow = !['bambu', 'marlin_serial'].includes(type);
   $('printer-allow-upload').checked = editing ? !!editing.allow_file_upload : defaultAllow;
   $('printer-allow-control').checked = editing ? !!editing.allow_remote_control : defaultAllow;
+  $('printer-autostart').checked = !!editing?.auto_start;
+  $('printer-require-removal').checked = editing ? editing.bed_check_require_removal !== false : true;
+  $('printer-threshold').value = editing?.bed_check_threshold ?? '';
+  $('printer-frames').value = editing?.bed_check_frames ?? '';
+  $('printer-roi').value = (editing?.bed_check_roi || [0, 0, 1, 1]).join(', ');
   $('printer-msg').textContent = '';
   showBambuFields();
   printerDialog.showModal();
@@ -619,7 +624,11 @@ $('printer-form').addEventListener('submit', async e => {
     const type = editing ? editing.type : $('printer-type').value;
     const fields = { name: $('printer-name').value.trim(), host: $('printer-host').value.trim(),
       rotate: Number($('printer-rotate').value), location: $('printer-location').value.trim(),
-      allow_file_upload: $('printer-allow-upload').checked, allow_remote_control: $('printer-allow-control').checked };
+      allow_file_upload: $('printer-allow-upload').checked, allow_remote_control: $('printer-allow-control').checked,
+      auto_start: $('printer-autostart').checked, bed_check_require_removal: $('printer-require-removal').checked,
+      bed_check_roi: $('printer-roi').value.trim() || '0, 0, 1, 1' };
+    if ($('printer-threshold').value) fields.bed_check_threshold = Number($('printer-threshold').value);
+    if ($('printer-frames').value) fields.bed_check_frames = Number($('printer-frames').value);
     if (type === 'bambu') {
       fields.serial = $('printer-serial').value.trim();
       fields.mode = $('printer-mode').value;
@@ -815,12 +824,24 @@ async function renderQueue() {
     { label: '#', cell: j => String(data.jobs.indexOf(j) + 1) },
     { label: 'File', cell: j => el('b', { text: j.file }) },
     { label: 'Printer', cell: j => j.printer_name },
-    { label: 'Status', cell: j => el('span', { class: 'chip ' + (j.ready ? 'complete' : ''),
-      text: j.ready ? 'Ready' : `Waiting: ${j.waiting}` }) },
+    { label: 'Status', cell: queueStatus },
     { label: 'Added', class: 'muted', cell: j => el('span', { text: new Date(j.added * 1000).toLocaleString(),
       title: `Added by ${j.by}` }) },
     { label: '', class: 'actions-col', cell: queueActions },
   ], data.jobs));
+}
+
+function queueStatus(j) {
+  const box = el('div', {}, el('span', { class: 'chip ' + (j.ready ? 'complete' : ''),
+    text: j.ready ? 'Ready' : `Waiting: ${j.waiting}` }));
+  const b = j.bed_check;
+  if (b && b.auto_start) {
+    const score = b.score == null ? '' : ` · ${b.score.toFixed(1)}% changed (limit ${b.threshold}%)`;
+    const text = !b.has_reference ? 'Auto-start: save an empty-bed picture first'
+      : `Auto-start: ${b.reason || 'waiting for the printer'}${b.reason.includes('%') ? '' : score}`;
+    box.append(el('div', { class: 'muted small', text }));
+  }
+  return box;
 }
 
 function queueActions(j) {
@@ -840,9 +861,56 @@ function queueActions(j) {
   return box;
 }
 
+// Bed check: one row per printer with its empty-bed picture, auto-start setting and last result.
+const bedBox = $('bedcheck');
+async function renderBedCheck() {
+  let data;
+  try {
+    const r = await fetch('/api/bedcheck');
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+  } catch (e) {
+    notice(bedBox, e.message || 'Cannot load the bed check.');
+    return;
+  }
+  if (!data.printers.length) { notice(bedBox, 'No printers yet.'); return; }
+  bedBox.replaceChildren(table([
+    { label: 'Printer', cell: p => el('b', { text: p.name }) },
+    { label: 'Auto-start', cell: p => el('span', { class: 'chip ' + (p.auto_start ? 'complete' : ''),
+      text: p.auto_start ? 'On' : 'Off' }) },
+    { label: 'Empty-bed picture', cell: p => p.reference
+      ? el('a', { href: `/api/bedcheck/${encodeURIComponent(p.id)}/reference.jpg`, target: '_blank',
+        rel: 'noopener', text: `Saved ${p.reference.saved ? new Date(p.reference.saved).toLocaleString() : ''}` })
+      : el('span', { class: 'muted', text: 'None' }) },
+    { label: 'Last check', class: 'muted', cell: p => p.reason || (p.score == null ? '—' : `${p.score.toFixed(1)}% changed`) },
+    { label: '', class: 'actions-col', cell: bedActions },
+  ], data.printers));
+}
+
+function bedActions(p) {
+  const id = encodeURIComponent(p.id);
+  const box = el('div', { class: 'row-actions' });
+  box.append(el('button', { text: p.reference ? 'Replace empty-bed picture' : 'Save empty-bed picture', onclick: async () => {
+    if (!confirm(`Save the camera picture of ${p.name} as its EMPTY bed?\n\nThe bed must be empty, the light on as `
+      + 'usual, and the toolhead where it parks after a print.')) return;
+    toast(...await apiPost(`/api/bedcheck/${id}/reference`));
+    renderBedCheck();
+  } }));
+  if (p.reference) {
+    box.append(el('button', { text: 'Test now', onclick: async () => {
+      toast(...await apiPost(`/api/bedcheck/${id}/test`));
+    } }), el('button', { text: 'Delete picture', onclick: async () => {
+      if (!confirm(`Delete the empty-bed picture of ${p.name}? Auto-start stops until a new one is saved.`)) return;
+      toast(...await apiPost(`/api/bedcheck/${id}/reference/delete`));
+      renderBedCheck();
+    } }));
+  }
+  return box;
+}
+
 // Printers finish and free up on their own: keep the open Queue page current.
 setInterval(() => {
-  if (!document.hidden && location.hash.replace(/^#\/?/, '') === 'queue') renderQueue();
+  if (!document.hidden && location.hash.replace(/^#\/?/, '') === 'queue') { renderQueue(); renderBedCheck(); }
 }, 5000);
 
 filesAdd.addEventListener('click', () => filesInput.click());
@@ -988,7 +1056,7 @@ function route() {
   $('crumb').textContent = PAGES[page];
   document.title = `${PAGES[page]} · Printers`;
   if (page === 'files') renderFiles();
-  if (page === 'queue') renderQueue();
+  if (page === 'queue') { renderQueue(); renderBedCheck(); }
   if (page === 'mainsail') renderMainsail();
 }
 window.addEventListener('hashchange', route);

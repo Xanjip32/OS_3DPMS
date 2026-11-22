@@ -24,7 +24,8 @@ TEMP_SAMPLES = 360          # temperature history per printer (30 minutes at 5 s
 BUSY = ("printing", "paused")
 
 ICONS = {"started": "▶️", "complete": "✅", "error": "❌", "paused": "⏸️",
-         "cancelled": "⏹️", "offline": "⚠️", "test": "🔔", "reconnected": "🔌", "warning": "⚠️"}
+         "cancelled": "⏹️", "offline": "⚠️", "test": "🔔", "reconnected": "🔌", "warning": "⚠️",
+         "auto_started": "🤖", "bed_not_clear": "🧹"}
 
 
 def transition(old, new):
@@ -65,6 +66,10 @@ def describe(kind, name, st):
         "offline": "%s is not answering while it was printing" % name,
         "reconnected": "%s is answering again" % name,
         "warning": "%s: %s" % (name, msg or "warning"),
+        "auto_started": "%s: bed check passed, started the next queued job %s%s" % (
+            name, file, (" (" + msg + ")") if msg else ""),
+        "bed_not_clear": "%s: the bed is not clear, so the next job %s waits. Remove the part and it starts "
+                         "by itself%s" % (name, file, (" (" + msg + ")") if msg else ""),
         "test": "Test notification from OS_3DPMS",
     }[kind]
     return "%s %s" % (ICONS[kind], text)
@@ -238,6 +243,11 @@ class Monitor:
         if notify:
             self.app.notifier.send(event)
         return event
+
+    def announce(self, kind, p, st):
+        """Record and send an event that does not come from a status change (auto-start)."""
+        with self.lock:
+            return self._emit(kind, p, st)
 
     def test_event(self):
         """Record a test event for the browser; the caller delivers it to phones."""

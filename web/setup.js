@@ -578,6 +578,8 @@ const EVENT_LABELS = {
   complete: 'finishes', error: 'fails / errors', paused: 'pauses',
   cancelled: 'is cancelled', started: 'starts', offline: 'printer goes offline while printing',
   reconnected: 'printer is back online', warning: 'printer reports a warning (HMS, filament, shutdown)',
+  auto_started: 'the queue started the next job by itself (bed check passed)',
+  bed_not_clear: 'the next queued job waits because the bed is not clear (auto-start)',
 };
 const SECRET_INPUTS = ['ntfy_url', 'ntfy_token', 'discord_webhook', 'telegram_token'];
 const clearFlags = {};

@@ -103,6 +103,14 @@
         clear, then start its next job. Add jobs with <b>Add to queue</b> on the Files page.</span>
     </div>
     <div class="table-wrap" id="queue"></div>
+    <div class="page-head"><h1 class="h2">Bed check and auto-start</h1></div>
+    <div class="toolbar">
+      <span class="muted">Optional, per printer. Save a picture of the <b>empty bed</b> (toolhead where it parks
+        after a print). After a print, OS_3DPMS compares the camera with it; with <b>Auto-start</b> on (Devices &gt;
+        Edit) the next job starts by itself once the finished part is gone and the bed matches for a few pictures
+        in a row. Small, flat, transparent or bed-colored parts can be missed: see docs/BED_CHECK.md.</span>
+    </div>
+    <div class="table-wrap" id="bedcheck"></div>
   </section>
 
   <!-- ------------------------------------------------------------ files -->
@@ -192,6 +200,19 @@
       <label class="check"><input type="checkbox" id="printer-allow-upload"> Allow file uploads</label>
       <label class="check"><input type="checkbox" id="printer-allow-control"> Allow remote start, pause, resume and cancel</label>
     </div>
+    <fieldset class="bedcheck-fields">
+      <legend>Bed check and auto-start (Queue)</legend>
+      <label class="check"><input type="checkbox" id="printer-autostart"> Start the next queued job by itself when
+        the bed check passes</label>
+      <label class="check"><input type="checkbox" id="printer-require-removal"> Only after a finished part was seen
+        and then removed (recommended)</label>
+      <label class="field">Allowed change (% of the bed area, lower is stricter)
+        <input id="printer-threshold" type="number" min="0.1" max="50" step="0.1" placeholder="0.5"></label>
+      <label class="field">Clear pictures in a row before starting
+        <input id="printer-frames" type="number" min="1" max="10" step="1" placeholder="3"></label>
+      <label class="field">Bed area in the camera picture: left, top, right, bottom (0 to 1)
+        <input id="printer-roi" placeholder="0, 0, 1, 1" spellcheck="false" autocomplete="off"></label>
+    </fieldset>
     <label class="field">Camera rotation
       <select id="printer-rotate"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
     <p class="msg" id="printer-msg" role="status"></p>

@@ -327,3 +327,9 @@ ul.ports { margin: 6px 0; padding-left: 18px; color: var(--muted); }
 .temp-chart .nozzle { stroke: #c0392b; } .temp-chart .bed { stroke: #1559a2; }
 .temp-chart polyline { fill: none; stroke-width: 1.5; }
 .detail-body pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto; }
+
+/* Queue: bed check */
+.h2 { font-size: 1.15rem; margin-top: 1.5rem; }
+.small { font-size: .85em; margin-top: .25rem; }
+fieldset.bedcheck-fields { border: 1px solid var(--line, #ccc); border-radius: 8px; padding: .5rem .75rem; margin: .5rem 0; }
+fieldset.bedcheck-fields legend { padding: 0 .25rem; font-weight: 600; }
