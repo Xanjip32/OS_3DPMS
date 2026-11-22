@@ -1,12 +1,16 @@
-"""Send events to phones: ntfy, Discord webhook, Telegram bot.
+"""Send events to phones: ntfy, Discord webhook, Telegram bot, e-mail (SMTP).
 
 Only links that pass config validation are used (https, known Discord host),
 so the dashboard cannot be turned into a tool for calling arbitrary URLs.
 """
 import base64
+import email.message
+import email.utils
 import json
 import logging
 import queue
+import smtplib
+import ssl
 import threading
 import time
 import urllib.parse
@@ -86,8 +90,35 @@ def send_telegram(token, chat_id, text, image=None, api=TELEGRAM_API):
     return _request("%s/bot%s/sendMessage" % (api, token), body, {"Content-Type": "application/json"})
 
 
+def send_email(n, password, subject, text, image=None, timeout=20):
+    """One message to every smtp_to address. TLS is verified; plain SMTP only to localhost (config checks)."""
+    msg = email.message.EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = n["smtp_from"]
+    msg["To"] = ", ".join(n["smtp_to"])
+    msg["Date"] = email.utils.formatdate(localtime=True)
+    msg["Message-ID"] = email.utils.make_msgid(domain="os3dpms.local")
+    msg.set_content(text)
+    if image:
+        msg.add_attachment(image, maintype="image", subtype="jpeg", filename="camera.jpg")
+    security = n.get("smtp_security", "starttls")
+    context = ssl.create_default_context()
+    if security == "ssl":
+        server = smtplib.SMTP_SSL(n["smtp_host"], n["smtp_port"], timeout=timeout, context=context)
+    else:
+        server = smtplib.SMTP(n["smtp_host"], n["smtp_port"], timeout=timeout)
+    with server:
+        if security == "starttls":
+            server.starttls(context=context)
+        if n.get("smtp_user") and password:
+            server.login(n["smtp_user"], password)
+        server.send_message(msg)
+    return 250
+
+
 TAGS = {"complete": "white_check_mark", "error": "x", "paused": "pause_button",
-        "cancelled": "stop_button", "offline": "warning", "started": "arrow_forward", "test": "bell"}
+        "cancelled": "stop_button", "offline": "warning", "started": "arrow_forward", "test": "bell",
+        "reconnected": "electric_plug", "warning": "warning"}
 
 
 class Notifier:
@@ -106,6 +137,8 @@ class Notifier:
             out.append("discord")
         if (n.get("telegram_token") or n.get("telegram_token_protected")) and n.get("telegram_chat_id"):
             out.append("telegram")
+        if n.get("smtp_host") and n.get("smtp_to"):
+            out.append("email")
         return out
 
     def send(self, event):
@@ -152,6 +185,8 @@ class Notifier:
                     send_discord(config.secret(n, "discord_webhook"), event["text"], image)
                 elif ch == "telegram":
                     send_telegram(config.secret(n, "telegram_token"), n["telegram_chat_id"], event["text"], image)
+                elif ch == "email":
+                    send_email(n, config.secret(n, "smtp_password"), "[OS_3DPMS] " + title, event["text"], image)
                 results[ch] = "ok"
             except Exception as e:
                 results[ch] = str(e)[:200]

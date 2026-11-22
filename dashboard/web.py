@@ -358,6 +358,9 @@ class App:
             "snapshot": bool(payload.get("snapshot")),
             "telegram_chat_id": str(payload.get("telegram_chat_id") or "").strip(),
         }
+        for field in config.EMAIL_FIELDS + ("smtp_password_env",):   # config.json only: keep as saved
+            if field in prev:
+                n[field] = prev[field]
         for field in config.NOTIFY_SECRETS:
             value = str(payload.get(field) or "").strip()
             if payload.get("clear_" + field):

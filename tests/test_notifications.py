@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -158,6 +159,26 @@ class NotificationTests(test_dashboard.ServerFixture):
             post({"clear_discord_webhook": True})
         self.assertEqual(self.app.notifier.channels(), [])
 
+    def test_email_settings_survive_setup_save(self):
+        headers = {"X-Dashboard": "1", "Content-Type": "application/json"}
+        raw = config.read_raw(self.app.config_path)
+        raw["notifications"] = dict(EmailTests.SMTP)
+        config.save(self.app.config_path, config.validate(raw))
+        try:
+            resp, data = self.request("POST", "/api/setup/notifications", json.dumps({"events": {}}).encode(),
+                                      headers, admin=True)
+            self.assertEqual(resp.status, 200, data)
+            self.assertIn("email", json.loads(data)["channels"])
+            n = config.read_raw(self.app.config_path)["notifications"]
+            self.assertEqual(n["smtp_host"], "smtp.example.com")
+            self.assertTrue(n.get("smtp_password") or n.get("smtp_password_protected"))
+        finally:
+            raw = config.read_raw(self.app.config_path)
+            raw["notifications"] = {}
+            config.save(self.app.config_path, config.validate(raw))
+            self.request("POST", "/api/setup/notifications", b'{"events": {}}', headers, admin=True)
+        self.assertEqual(self.app.notifier.channels(), [])
+
     def test_url_validation(self):
         bad = [{"ntfy_url": "http://ntfy.sh/topic"},
                {"ntfy_url": "https://ntfy.sh/a/b?x=1"},
@@ -169,6 +190,39 @@ class NotificationTests(test_dashboard.ServerFixture):
                 config.validate({"notifications": n})
         ok = config.validate({"notifications": {"ntfy_url": "https://ntfy.sh/os3dpms-abc123"}})
         self.assertEqual(ok["notifications"]["ntfy_url"], "https://ntfy.sh/os3dpms-abc123")
+
+
+class EmailTests(unittest.TestCase):
+    SMTP = {"smtp_host": "smtp.example.com", "smtp_user": "bot@example.com", "smtp_password": "app-password",
+            "smtp_to": "me@example.com"}
+
+    def test_validation(self):
+        n = config.validate({"notifications": dict(self.SMTP)})["notifications"]
+        self.assertEqual((n["smtp_port"], n["smtp_security"], n["smtp_from"], n["smtp_to"]),
+                         (587, "starttls", "bot@example.com", ["me@example.com"]))
+        bad = [dict(self.SMTP, smtp_security="none"),        # plain SMTP only to localhost
+               dict(self.SMTP, smtp_to="not-an-address"),
+               dict(self.SMTP, smtp_to=[]),
+               dict(self.SMTP, smtp_port=70000),
+               dict(self.SMTP, smtp_host="bad host!")]
+        for b in bad:
+            with self.assertRaises(config.ConfigError, msg=str(b)):
+                config.validate({"notifications": b})
+        local = config.validate({"notifications": dict(self.SMTP, smtp_host="localhost", smtp_security="none",
+                                                       smtp_port=25)})
+        self.assertEqual(local["notifications"]["smtp_security"], "none")
+
+    def test_send_uses_tls_and_login(self):
+        n = config.validate({"notifications": dict(self.SMTP)})["notifications"]
+        with mock.patch("smtplib.SMTP") as smtp:
+            server = smtp.return_value.__enter__.return_value = smtp.return_value
+            notify.send_email(n, "app-password", "[OS_3DPMS] Voron: complete", "done", image=b"\xff\xd8x")
+        smtp.assert_called_once_with("smtp.example.com", 587, timeout=20)
+        server.starttls.assert_called_once()
+        server.login.assert_called_once_with("bot@example.com", "app-password")
+        msg = server.send_message.call_args[0][0]
+        self.assertEqual(msg["To"], "me@example.com")
+        self.assertEqual(len(list(msg.iter_attachments())), 1)
 
 
 class BambuStatusTests(unittest.TestCase):

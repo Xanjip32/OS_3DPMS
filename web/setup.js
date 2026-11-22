@@ -545,6 +545,7 @@ saveBtn.addEventListener('click', async () => {
 const EVENT_LABELS = {
   complete: 'finishes', error: 'fails / errors', paused: 'pauses',
   cancelled: 'is cancelled', started: 'starts', offline: 'printer goes offline while printing',
+  reconnected: 'printer is back online', warning: 'printer reports a warning (HMS, filament, shutdown)',
 };
 const SECRET_INPUTS = ['ntfy_url', 'ntfy_token', 'discord_webhook', 'telegram_token'];
 const clearFlags = {};

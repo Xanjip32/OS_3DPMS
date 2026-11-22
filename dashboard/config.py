@@ -39,7 +39,11 @@ DEFAULTS = {
 
 NOTIFY_EVENTS = ("started", "complete", "error", "paused", "cancelled", "offline", "reconnected", "warning")
 NOTIFY_DEFAULT_ON = ("complete", "error", "paused", "offline", "reconnected", "warning")
-NOTIFY_SECRETS = ("ntfy_url", "ntfy_token", "discord_webhook", "telegram_token")
+NOTIFY_SECRETS = ("ntfy_url", "ntfy_token", "discord_webhook", "telegram_token", "smtp_password")
+# E-mail is set in config.json only (see docs/NOTIFICATIONS.md); the Setup page keeps these as they are.
+EMAIL_FIELDS = ("smtp_host", "smtp_port", "smtp_security", "smtp_user", "smtp_from", "smtp_to")
+SMTP_SECURITY = ("starttls", "ssl", "none")
+EMAIL_RE = re.compile(r"^[^@\s<>,;]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 NTFY_RE = re.compile(r"^https://[A-Za-z0-9.\-]+(:\d+)?/[A-Za-z0-9_\-]{1,64}$")
 DISCORD_RE = re.compile(r"^https://(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)"
                         r"/api/webhooks/\d+/[A-Za-z0-9_\-]+$")
@@ -267,7 +271,42 @@ def _validate_notifications(raw):
     if chat and not TELEGRAM_CHAT_RE.match(chat):
         raise ConfigError("Telegram chat id must be a number or @channel")
     n["telegram_chat_id"] = chat
+    _validate_email(n)
     return n
+
+
+def _validate_email(n):
+    host = str(n.get("smtp_host") or "").strip()
+    if not host:
+        for key in EMAIL_FIELDS:
+            n.pop(key, None)
+        return
+    if not HOST_RE.match(host):
+        raise ConfigError("smtp_host must be a hostname or IP address")
+    security = str(n.get("smtp_security") or "starttls").lower()
+    if security not in SMTP_SECURITY:
+        raise ConfigError("smtp_security must be starttls, ssl or none")
+    if security == "none" and host not in ("localhost", "127.0.0.1", "::1"):
+        raise ConfigError("smtp_security none is only allowed for a mail relay on this PC (localhost)")
+    try:
+        port = int(n.get("smtp_port") or (465 if security == "ssl" else 587))
+    except (TypeError, ValueError):
+        raise ConfigError("smtp_port must be a number") from None
+    if not 1 <= port <= 65535:
+        raise ConfigError("smtp_port must be 1-65535")
+    to = n.get("smtp_to")
+    to = [to] if isinstance(to, str) else (to or [])
+    to = [str(t).strip() for t in to if str(t).strip()]
+    if not to or len(to) > 10 or not all(EMAIL_RE.match(t) for t in to):
+        raise ConfigError("smtp_to must be 1-10 e-mail addresses")
+    sender = str(n.get("smtp_from") or n.get("smtp_user") or "").strip()
+    if not EMAIL_RE.match(sender):
+        raise ConfigError("smtp_from must be an e-mail address")
+    env = n.get("smtp_password_env")
+    if env and not ENV_RE.match(str(env)):
+        raise ConfigError("smtp_password_env must be an environment variable name")
+    n.update(smtp_host=host, smtp_port=port, smtp_security=security, smtp_to=to, smtp_from=sender,
+             smtp_user=str(n.get("smtp_user") or "").strip())
 
 
 def protect_secrets(cfg):
