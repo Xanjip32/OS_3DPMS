@@ -22,6 +22,22 @@
   `POST /api/bedcheck/<id>/reference`, `/reference/delete`, `/test`
 - Docs: [docs/BED_CHECK.md](docs/BED_CHECK.md) (how it works, settings, limits)
 
+### Orca Slicer plugin and API tokens (branch `feature/bed-check-orca-plugin`)
+
+- **Orca Slicer printer agent** `orca_plugin/os3dpms_printer_agent_any.py` (beta, single PEP 723
+  file, standard library only): agents **OS_3DPMS (queue)** and **OS_3DPMS (print now)**, printer
+  list and Bambu-style status in Orca's Device tab, pause / resume / cancel. Needs an Orca Slicer
+  Nightly with plugin support and *Use printer agents instead of print hosts*. Tested against a
+  stand-in `orca` module only, not yet inside a real Orca Slicer
+- **API tokens** (`Authorization: Bearer os3_...`, roles operator / viewer, stored as SHA-256 in
+  `api_tokens`): Setup page card, `run.py --add-token NAME [--role viewer]` / `--remove-token NAME`.
+  Host and Tailscale allow-list checks still apply; wrong tokens are audited and rate-limited
+- New API: `GET /api/plugin/printers`, `POST /api/plugin/jobs?printer=&name=&action=queue|send|print`,
+  admin `GET/POST /api/setup/tokens`, `POST /api/setup/tokens/delete`
+- `.github/workflows/publish-orcacloud.yml`: publishes the plugin to the Orca Cloud Plugin Hub on
+  `orca-plugin-v*` releases, off until the repository variable `ORCACLOUD_PUBLISH` is `true`
+- Docs: [docs/ORCA_PLUGIN.md](docs/ORCA_PLUGIN.md)
+
 ### Universal printer adapters (branch `feature/universal-adapters`)
 
 - **Breaking for Bambu remote control:** Bambu printers are now **read-only by default**, also

@@ -677,6 +677,35 @@ async function loadConfig() {
   }
 }
 
+// ---------------------------------------------------------------- API tokens (Orca Slicer plugin)
+function renderTokens(tokens) {
+  $('tk-state').textContent = tokens.length ? `${tokens.length} token${tokens.length === 1 ? '' : 's'}` : '';
+  const box = $('tk-list');
+  box.replaceChildren(...tokens.map(t => el('div', { class: 'actions' },
+    el('span', { text: `${t.name} (${t.role}${t.created ? ', created ' + t.created.replace('T', ' ') : ''})` }),
+    el('button', { text: 'Remove', onclick: async () => {
+      if (!confirm(`Remove the API token ${t.name}? Programs using it stop working.`)) return;
+      try { renderTokens((await api('/api/setup/tokens/delete', { name: t.name })).tokens); } catch (e) { $('tk-msg').textContent = e.message; }
+    } }))));
+}
+
+$('tk-create').addEventListener('click', async () => {
+  const msg = $('tk-msg');
+  msg.className = 'msg';
+  try {
+    const r = await api('/api/setup/tokens', { name: $('tk-name').value.trim(), role: $('tk-role').value });
+    msg.className = 'msg ok';
+    msg.textContent = `New token (copy it now, it is not shown again): ${r.token}`;
+    $('tk-name').value = '';
+    renderTokens(r.tokens);
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.message;
+  }
+});
+
+api('/api/setup/tokens').then(r => renderTokens(r.tokens)).catch(() => {});
+
 loadConfig().catch(e => { $('save-msg').textContent = e.message; });
 refresh();
 setInterval(() => { if (!document.hidden) refresh(); }, 4000);
