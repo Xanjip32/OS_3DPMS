@@ -27,7 +27,9 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
-from . import __version__, bambu, cameras, config, discover, klipper, monitor, notify, qr, tailscale, tsinstall
+from . import __version__, adapters, auth, bambu, cameras, config, discover, klipper, monitor, notify, qr, tailscale, tsinstall
+from .services.job_manager import JobHistory
+from .services.printer_manager import PrinterManager
 from .forward import Forwarder, local_or_tailnet
 from .tlspin import CertificateChanged, PinStore
 
@@ -44,8 +46,14 @@ PUBLIC_FILES = {
     "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
 ADMIN_FILES = {"/setup": ("setup.html", HTML), "/setup.js": ("setup.js", JS)}
+# Served before login in the password auth modes.
+LOGIN_FILES = {"/login": ("login.html", HTML), "/login.js": ("login.js", JS), "/app.css": ("app.css", CSS),
+               "/icon-192.png": ("icon-192.png", "image/png"), "/manifest.webmanifest":
+               ("manifest.webmanifest", "application/manifest+json")}
+CONTROL_ACTIONS = ("pause", "resume", "cancel", "start")
 UPLOAD_EXTENSIONS = (".gcode", ".gco", ".g", ".3mf")
 FREE_STATES = ("standby", "complete", "cancelled")
+READ_ONLY_REFUSED = "Your account may view printers but not send files or control them."
 EDIT_REFUSED = ("Only accounts listed in Setup > Allowed Tailscale accounts may change printers remotely. "
                 "Add yours there on the printer PC.")  # a queued job may start (after the bed check)
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost"}
@@ -57,7 +65,11 @@ CSP = ("default-src 'self'; img-src 'self' blob:; script-src 'self'; style-src '
        "frame-src 'self' http://127.0.0.1:* http://localhost:* https://*.ts.net:*; "
        "frame-ancestors 'none'")
 EDITABLE_FIELDS = ("id", "name", "type", "host", "ui_port", "http_port", "webcam_url", "rotate",
-                   "flip_horizontal", "flip_vertical", "serial", "use_ams")
+                   "flip_horizontal", "flip_vertical", "serial", "use_ams",
+                   # added with the universal adapters (1.6)
+                   "location", "manufacturer", "model", "allow_remote_control", "allow_file_upload",
+                   "mode", "serial_port", "baudrate", "username", "websocket", "mqtt_port",
+                   "camera_port", "ftps_port", "access_code_env", "api_key_env", "password_env")
 
 
 IMPORT_FIELDS = EDITABLE_FIELDS + ("access_code", "api_key")
@@ -124,7 +136,11 @@ class App:
         self.hubs = {}
         self.upload_locks = {}
         self.forwarders = []
-        self.bambu_watchers = {}
+        self.manager = PrinterManager(self.pins)
+        self.history = JobHistory(os.path.join(data_dir, "history.json"))
+        self.sessions = auth.Sessions()
+        self.login_limiter = auth.RateLimiter(5, 15 * 60)      # 5 wrong passwords per 15 minutes
+        self.control_limiter = auth.RateLimiter(30, 60)        # 30 printer actions a minute per user
         self.monitor = None
         self.notifier = notify.Notifier(self)
         self.bambu_listener = discover.BambuListener()
@@ -181,14 +197,7 @@ class App:
                 fw.stop()
             for hub in self.hubs.values():
                 hub.stop()
-            for watcher in self.bambu_watchers.values():
-                watcher.stop()
-            self.bambu_watchers = {}
-            for p in cfg["printers"]:
-                if p["type"] == "bambu" and p.get("serial"):
-                    watcher = bambu.BambuWatcher(p, self.pins)
-                    watcher.start()
-                    self.bambu_watchers[p["id"]] = watcher
+            self.manager.load(cfg["printers"])  # one adapter per printer; Bambu ones start their MQTT watcher
             self.cfg = cfg
             self.printers = {p["id"]: p for p in cfg["printers"]}
             self.hubs = {pid: cameras.CameraHub(pid, self._camera_source(p))
@@ -213,10 +222,9 @@ class App:
                 if p["type"] != "bambu" or p.get("serial") or p["host"] != info["host"]:
                     continue
                 p["serial"] = info["serial"]
-                if p["id"] not in self.bambu_watchers:
-                    watcher = bambu.BambuWatcher(p, self.pins)
-                    watcher.start()
-                    self.bambu_watchers[p["id"]] = watcher
+                adapter = self.manager.get(p["id"])
+                if adapter is not None:
+                    adapter.connect()  # the adapter holds this same dict: it now has the serial
                 log.info("%s: serial number %s found on the network", p["id"], info["serial"])
                 try:
                     raw = config.read_raw(self.config_path)
@@ -227,10 +235,28 @@ class App:
                 except (OSError, config.ConfigError) as e:
                     log.warning("could not save the serial number of %s: %s", p["id"], e)
 
+    def sessions_role(self, user):
+        """Role of a dashboard (password) account, or None for Tailscale logins."""
+        for u in (self.cfg or {}).get("users", []):
+            if u["name"] == user:
+                return u["role"]
+        return None
+
+    @property
+    def bambu_watchers(self):
+        return self.manager.bambu_watchers()
+
+    def adapter(self, pid):
+        return self.manager.get(pid)
+
     def _camera_source(self, p):
-        if p["type"] == "bambu" and not p.get("webcam_url"):
-            return lambda hub: cameras.bambu_camera(hub, p["host"], config.secret(p, "access_code"), self.pins)
-        return lambda hub: cameras.klipper_camera(hub, lambda: klipper.webcam_urls(p))
+        adapter = self.manager.get(p["id"])
+        source = adapter.camera_source() if adapter is not None else None
+        if source is None:
+            def no_camera(hub):
+                raise ConnectionError("no camera for this printer: set a Camera URL override in Devices")
+            return no_camera
+        return source
 
     def publish_mappings(self):
         maps = [(443, self.cfg["port"])]
@@ -484,6 +510,17 @@ class Handler(BaseHTTPRequestHandler):
             return "local-admin" if host in LOCAL_HOSTNAMES else None
         if not local_or_tailnet(self.headers.get("Host")):
             return None  # DNS rebinding: another website pointed its name at this PC
+        cfg = self.app.cfg
+        ts_user = self.tailscale_identity()
+        mode = cfg.get("auth", {}).get("mode", "tailscale")
+        if mode == "tailscale":
+            return ts_user
+        if mode == "tailscale+password" and ts_user is None:
+            return None
+        session = self.app.sessions.get(auth.cookie_value(self.headers.get("Cookie")))
+        return session[0] if session else None
+
+    def tailscale_identity(self):
         login = (self.headers.get("Tailscale-User-Login") or "").strip().lower()
         cfg = self.app.cfg
         if not login:
@@ -492,8 +529,73 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return login
 
+    def password_mode(self):
+        return not self.admin and "password" in self.app.cfg.get("auth", {}).get("mode", "tailscale")
+
+    def pre_login(self, method, path):
+        """Requests answered without a session in the password modes: the login page and the login call."""
+        if not self.password_mode() or not local_or_tailnet(self.headers.get("Host")):
+            return False
+        if self.app.cfg["auth"]["mode"] == "tailscale+password" and self.tailscale_identity() is None:
+            return False
+        if method == "GET" and path in LOGIN_FILES:
+            self.send_file(*LOGIN_FILES[path])
+            return True
+        if method == "GET" and path in ("/", "/index.html"):
+            self.send_response(302)
+            self.send_header("Location", "/login")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
+        if method == "POST" and path == "/api/login":
+            self.handle_login()
+            return True
+        return False
+
+    def handle_login(self):
+        if not self.same_origin():
+            return self.send_json(403, {"error": "cross-site request blocked"})
+        try:
+            payload = self.read_json()
+        except config.ConfigError as e:
+            return self.send_json(400, {"error": str(e)})
+        name = str((payload or {}).get("user") or "").strip().lower()[:64]
+        password = str((payload or {}).get("password") or "")[:256]
+        key = "%s|%s" % (self.tailscale_identity() or "local", name)
+        if not self.app.login_limiter.allow(key) or not self.app.login_limiter.allow("*|" + name):
+            self.app.audit(name, "login", result="rate-limited")
+            return self.send_json(429, {"error": "Too many attempts. Wait 15 minutes."})
+        user = next((u for u in self.app.cfg.get("users", []) if u["name"] == name), None)
+        if user is None or not auth.verify_password(password, user["password_hash"]):
+            self.app.audit(name, "login", result="wrong-password")
+            return self.send_json(401, {"error": "Wrong user name or password."})
+        self.app.login_limiter.reset(key)
+        token = self.app.sessions.create(user["name"], user["role"])
+        self.app.audit(user["name"], "login", result="ok")
+        hours = self.app.cfg["auth"]["session_hours"]
+        secure = "; Secure" if (self.headers.get("Host") or "").lower().split(":")[0].endswith(".ts.net") else ""
+        data = json.dumps({"ok": True, "user": user["name"], "role": user["role"]}).encode()
+        self.send_response(200)
+        self.send_header("Set-Cookie", "%s=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=%d%s"
+                         % (auth.COOKIE, token, hours * 3600, secure))
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def handle_logout(self, user):
+        self.app.sessions.drop(auth.cookie_value(self.headers.get("Cookie")))
+        self.app.audit(user, "logout")
+        self.send_response(200)
+        self.send_header("Set-Cookie", "%s=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" % auth.COOKIE)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def refuse(self):
         login = (self.headers.get("Tailscale-User-Login") or "").strip()
+        if self.password_mode() and local_or_tailnet(self.headers.get("Host")) and \
+                (self.app.cfg["auth"]["mode"] == "password" or self.tailscale_identity() is not None):
+            return self.send_json(401, {"error": "Sign in first.", "login": "/login"})
         if self.admin:
             msg = "Open the setup page as http://127.0.0.1:%d/setup on this PC." % self.app.cfg["admin_port"]
         elif login:
@@ -520,10 +622,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            path = urllib.parse.urlsplit(self.path).path
             user = self.identity()
             if user is None:
+                if self.pre_login("GET", path):
+                    return
                 return self.refuse()
-            path = urllib.parse.urlsplit(self.path).path
             static = PUBLIC_FILES.get(path) or (ADMIN_FILES.get(path) if self.admin else None)
             if static:
                 return self.send_file(*static)
@@ -533,13 +637,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/me":
                 return self.send_json(200, {"user": user, "admin": self.admin, "version": __version__,
                                             "max_upload_mb": app.cfg["max_upload_mb"],
-                                            "can_edit": self.can_edit_printers(user)})
+                                            "can_edit": self.can_edit_printers(user),
+                                            "can_control": self.can_control(user),
+                                            "password_login": self.password_mode()})
             if path == "/api/printers":
-                return self.send_json(200, [{
-                    "id": p["id"], "name": p["name"], "type": p["type"], "ui_port": p.get("ui_port"),
-                    "rotate": p["rotate"], "flip_horizontal": p["flip_horizontal"],
-                    "flip_vertical": p["flip_vertical"],
-                } for p in app.cfg["printers"]])
+                return self.send_json(200, [self.printer_entry(p) for p in app.cfg["printers"]])
+            if path == "/api/locations":
+                return self.send_json(200, {"locations": app.manager.locations()})
+            if path == "/api/history":
+                return self.send_json(200, {"jobs": app.history.list(self.query("printer") or None)})
+            if len(parts) >= 3 and parts[:2] == ["api", "printers"]:
+                return self.send_printer_detail(parts[2], parts[3] if len(parts) == 4 else "")
             if len(parts) == 3 and parts[:2] == ["api", "status"]:
                 return self.send_status(parts[2])
             if path == "/api/files":
@@ -580,13 +688,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            path = urllib.parse.urlsplit(self.path).path
             user = self.identity()
             if user is None:
+                if self.pre_login("POST", path):
+                    return
                 return self.refuse()
             if not self.same_origin():
                 return self.send_json(403, {"error": "cross-site request blocked"})
-            path = urllib.parse.urlsplit(self.path).path
             parts = [x for x in path.split("/") if x]
+            if path == "/api/logout":
+                return self.handle_logout(user)
+            if len(parts) == 4 and parts[:2] == ["api", "printers"] and parts[3] in CONTROL_ACTIONS:
+                return self.handle_control(user, parts[2], parts[3])
             if len(parts) == 3 and parts[:2] == ["api", "upload"]:
                 return self.handle_upload(user, parts[2])
             if path in ("/api/files", "/api/files/send", "/api/files/delete"):
@@ -652,6 +766,93 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------ handlers
 
+    def printer_entry(self, p):
+        """Public description of a printer: no host secrets, with capabilities from its adapter."""
+        adapter = self.app.adapter(p["id"])
+        entry = {
+            "id": p["id"], "name": p["name"], "type": p["type"], "ui_port": p.get("ui_port"),
+            "rotate": p["rotate"], "flip_horizontal": p["flip_horizontal"],
+            "flip_vertical": p["flip_vertical"], "location": p.get("location", ""),
+            "manufacturer": p.get("manufacturer", ""), "model": p.get("model", ""),
+            "protocol": adapter.protocol if adapter else p["type"],
+            "capabilities": adapter.get_capabilities() if adapter else {},
+            "file_extensions": list(adapter.file_extensions) if adapter else [],
+        }
+        if adapter and not entry["manufacturer"]:
+            entry["manufacturer"] = adapter.manufacturer
+        return entry
+
+    def send_printer_detail(self, pid, what):
+        app = self.app
+        p = app.printers.get(pid)
+        adapter = app.adapter(pid)
+        if p is None or adapter is None:
+            return self.send_json(404, {"error": "unknown printer"})
+        if what == "":
+            st = app.monitor.status.get(pid) if app.monitor else None
+            health = app.monitor.health(pid) if app.monitor else {}
+            return self.send_json(200, dict(self.printer_entry(p), status=st or {"state": None},
+                                            connection=health, history=app.history.list(pid, 20)))
+        if what == "diagnostics":
+            return self.send_json(200, adapter.diagnostics())
+        if what == "history":
+            try:
+                remote = adapter.get_history(20)
+            except Exception as e:
+                remote = [{"error": str(e)[:120]}]
+            return self.send_json(200, {"jobs": app.history.list(pid, 50), "printer_history": remote})
+        if what == "files":
+            try:
+                return self.send_json(200, {"files": adapter.list_files()[:500]})
+            except adapters.AdapterError as e:
+                return self.send_json(400, {"error": str(e)})
+            except Exception as e:
+                return self.send_json(502, {"error": "printer did not answer: %s" % str(e)[:120]})
+        if what == "temperatures":
+            return self.send_json(200, {"samples": app.monitor.temperature_history(pid) if app.monitor else []})
+        return self.send_json(404, {"error": "not found"})
+
+    def handle_control(self, user, pid, action):
+        """Pause, resume, cancel or start a print. Checked: account, capability, confirmation, rate."""
+        app = self.app
+        adapter = app.adapter(pid)
+        if adapter is None:
+            return self.send_json(404, {"ok": False, "error": "unknown printer"})
+        if not self.can_control(user):
+            return self.send_json(403, {"ok": False, "error": READ_ONLY_REFUSED})
+        if not app.control_limiter.allow(user):
+            return self.send_json(429, {"ok": False, "error": "Too many printer actions; wait a minute."})
+        try:
+            payload = self.read_json()
+        except config.ConfigError:
+            payload = {}
+        payload = payload if isinstance(payload, dict) else {}
+        # Dangerous actions must be confirmed: the request names the printer it is meant for.
+        if action in ("cancel", "start") and payload.get("confirm") != pid:
+            return self.send_json(428, {"ok": False, "error": "Confirm %s on %s" % (action, adapter.p["name"]),
+                                        "confirm": pid})
+        try:
+            if action == "pause":
+                msg = adapter.pause_print()
+            elif action == "resume":
+                msg = adapter.resume_print()
+            elif action == "cancel":
+                msg = adapter.cancel_print()
+            else:
+                name = safe_filename(str(payload.get("file") or ""))
+                if not name or not adapter.accepts_file(name):
+                    return self.send_json(400, {"ok": False, "error": "choose a printable file"})
+                msg = adapter.start_print(name)
+                app.history.started(pid, name, user, "control")
+        except adapters.AdapterError as e:
+            code = 403 if isinstance(e, adapters.NotAuthorized) else 409 if isinstance(e, adapters.PrinterBusy) \
+                else 400 if isinstance(e, adapters.NotSupported) else 502
+            app.audit(user, "control", printer=pid, action=action, result="refused", error=str(e)[:200])
+            return self.send_json(code, {"ok": False, "error": str(e)[:300]})
+        app.audit(user, "control", printer=pid, action=action, result="ok")
+        log.info("%s: %s on %s", user, action, pid)
+        self.send_json(200, {"ok": True, "message": msg})
+
     def send_status(self, pid):
         p = self.app.printers.get(pid)
         if p is None:
@@ -684,14 +885,16 @@ class Handler(BaseHTTPRequestHandler):
 
         hub.touch()
         host = p["host"]
-        port = 8883 if p["type"] == "bambu" else p["http_port"]
+        port = p.get("mqtt_port", 8883) if p["type"] == "bambu" else p.get("http_port", 0)
         try:
             if p["type"] == "klipper":
                 klipper.status(p)
                 printer = "Moonraker responded at %s:%d." % (host, port)
                 printer_ok = True
-            else:
+            elif p["type"] == "bambu":
                 printer_ok, printer = self.check_bambu(p)
+            else:
+                printer_ok, printer = self.check_adapter(p)
         except (OSError, ValueError, KeyError, TypeError) as error:
             printer_ok = False
             if isinstance(error, urllib.error.HTTPError):
@@ -724,11 +927,22 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(200, {"printer_ok": printer_ok, "printer": printer,
                                     "camera_ok": camera_ok, "camera": camera})
 
+    def check_adapter(self, p):
+        """(ok, text) for OctoPrint, PrusaLink and direct serial printers: one status read."""
+        adapter = self.app.adapter(p["id"])
+        st = adapter.get_status() if adapter else None
+        label = config.TYPE_LABELS.get(p["type"], p["type"])
+        if st is None:
+            where = p.get("serial_port") if p["type"] == "marlin_serial" else "%s:%s" % (p["host"], p.get("http_port"))
+            return False, "%s at %s did not answer: %s" % (label, where, adapter.last_error if adapter else "")
+        return True, "%s responded (state: %s)." % (label, st.get("state"))
+
     def check_bambu(self, p):
         """(ok, text): log in with the saved access code, as live status and remote start do."""
         host = p["host"]
         try:
-            ok, text = bambu.check_login(host, config.secret(p, "access_code"), self.app.pins)
+            ok, text = bambu.check_login(host, config.secret(p, "access_code"), self.app.pins,
+                                         port=p.get("mqtt_port", 8883))
         except CertificateChanged as e:
             return False, str(e)
         if not ok:
@@ -794,6 +1008,13 @@ class Handler(BaseHTTPRequestHandler):
             "public_url": "https://%s/" % dns if dns else "",
             "printers": len(self.app.printers),
         })
+
+    def can_control(self, user):
+        """Upload, start, pause, resume, cancel: everyone allowed in, except read-only accounts."""
+        if self.admin:
+            return True
+        return user not in self.app.cfg.get("read_only_users", []) and \
+            self.app.sessions_role(user) != "viewer"
 
     def can_edit_printers(self, user):
         """Printer settings change on the PC itself, or remotely by an account named in Allowed accounts."""
@@ -874,17 +1095,38 @@ class Handler(BaseHTTPRequestHandler):
         """Push a file on this PC to a printer and reply. The caller holds the printer's upload lock."""
         app = self.app
         size = os.path.getsize(path)
+        adapter = app.adapter(p["id"])
+        if adapter is None:
+            self.send_json(503, {"ok": False, "error": "printer is not loaded; check Setup"})
+            return False
+        if not self.can_control(user):
+            self.send_json(403, {"ok": False, "error": READ_ONLY_REFUSED})
+            return False
+        if not adapter.accepts_file(name):
+            self.send_json(400, {"ok": False, "error": "%s takes %s files, not %s" % (
+                p["name"], ", ".join(adapter.file_extensions), os.path.splitext(name)[1] or "this file")})
+            return False
+        if self.query("overwrite", "0") != "1" and hasattr(adapter, "file_exists"):
+            if adapter.file_exists(name) is True:  # never replace a file on the printer without asking
+                self.send_json(409, {"ok": False, "exists": True,
+                                     "error": "%s already has %s. Send again to replace it." % (p["name"], name)})
+                return False
         try:
-            if p["type"] == "bambu":
-                # Bambu firmware cannot open a print file whose name contains spaces.
-                msg = bambu.upload(p, path, name.replace(" ", "_"), start, app.pins,
-                                   app.bambu_watchers.get(p["id"]))
-            else:
-                msg = klipper.upload(p, path, name, start)
+            # Bambu firmware cannot open a print file whose name contains spaces (the adapter renames).
+            msg = adapter.upload_file(path, name, start)
             app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="ok")
             log.info("%s uploaded %s to %s", user, name, p["id"])
+            if start and "print started" in msg:
+                app.history.started(p["id"], name, user, "upload")
             self.send_json(200, {"ok": True, "message": msg})
             return True
+        except adapters.AdapterError as e:
+            code = 403 if isinstance(e, adapters.NotAuthorized) else 409 if isinstance(e, adapters.PrinterBusy) \
+                else 400 if isinstance(e, adapters.NotSupported) else 502
+            app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="refused",
+                      error=str(e)[:200])
+            self.send_json(code, {"ok": False, "error": str(e)[:300]})
+            return False
         except Exception as e:
             log.warning("upload to %s failed: %s", p["id"], e)
             app.audit(user, "upload", printer=p["id"], file=name, bytes=size, start=start, result="error",
@@ -942,8 +1184,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_files(self, user, path):
         app = self.app
+        if not self.can_control(user):
+            return self.send_json(403, {"ok": False, "error": READ_ONLY_REFUSED})
         name = safe_filename(self.query("name"))
-        if path == "/api/files":  # save the request body in the library (a file of the same name is replaced)
+        if path == "/api/files":  # save the request body in the library
+            if os.path.isfile(os.path.join(app.files_dir, name)) and self.query("overwrite", "0") != "1":
+                length = int(self.headers.get("Content-Length") or 0)
+                self.discard_body(length)
+                return self.send_json(409, {"ok": False, "exists": True,
+                                            "error": "%s is already in Files. Save again to replace it." % name})
             tmp = self.read_upload(name)
             if tmp:
                 os.replace(tmp, os.path.join(app.files_dir, name))
@@ -970,6 +1219,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_queue(self, user, path):
         app = self.app
+        if not self.can_control(user):
+            return self.send_json(403, {"ok": False, "error": READ_ONLY_REFUSED})
         if path == "/api/queue/add":
             name = safe_filename(self.query("name"))
             p = app.printers.get(self.query("printer"))

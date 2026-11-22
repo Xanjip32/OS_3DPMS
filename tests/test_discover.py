@@ -113,9 +113,10 @@ class AutoSerialTests(unittest.TestCase):
         app.config_path = self.cfg_path
         app.lock = web.threading.RLock()
         app.cfg = config.load(self.cfg_path)
-        app.bambu_watchers = {}
         app.pins = None
+        app.manager = web.PrinterManager(None)
         with mock.patch.object(web.bambu.BambuWatcher, "start"):
+            app.manager.load(app.cfg["printers"])
             app._bambu_seen(discover.parse_bambu(NOTIFY, "192.0.2.6"))
             app._bambu_seen(discover.parse_bambu(NOTIFY, "192.0.2.99"))  # another printer: ignored
         self.assertEqual(app.cfg["printers"][0]["serial"], "01P00A000000001")
