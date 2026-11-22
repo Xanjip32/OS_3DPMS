@@ -2,7 +2,9 @@
 import hashlib
 import json
 import re
+import struct
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -47,13 +49,26 @@ class _Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------- OctoPrint
 
 class MockOctoPrint(_Base):
-    def __init__(self, key="op-key"):
+    """websocket=True adds OctoPrint's push channel: passive /api/login and /sockjs/websocket."""
+
+    def __init__(self, key="op-key", websocket=False):
         self.key = key
+        self.websocket = websocket
+        self.ws_auth = []        # "auth" messages received
+        self.ws_silent = False   # stop sending "current" messages (a stuck push channel)
+        self.ws_count = 0
         self.flags = {"operational": True, "printing": True, "paused": False, "ready": False, "error": False}
         self.connected = True
         self.completion = 42.5
         self.files = {"cube.gcode"}
         super().__init__(_OctoHandler)
+
+    def current(self):
+        return {"state": {"text": "Printing" if self.flags.get("printing") else "Operational", "flags": self.flags},
+                "job": {"file": {"name": "ws-cube.gcode"}},
+                "progress": {"completion": self.completion, "printTime": 1300, "printTimeLeft": 1700},
+                "temps": [{"time": 1, "tool0": {"actual": 210.0, "target": 210.0},
+                           "bed": {"actual": 61.0, "target": 60.0}}]}
 
     def printer(self, **extra):
         p = {"id": "kossel", "name": "Kossel", "type": "octoprint", "host": "127.0.0.1", "http_port": self.port,
@@ -72,6 +87,8 @@ class _OctoHandler(_Handler):
     def do_GET(self):
         srv = self.server
         srv.calls.append(("GET", self.path))
+        if self.path == "/sockjs/websocket" and srv.websocket:
+            return self._websocket()
         if not self._auth():
             return
         if self.path == "/api/printer":
@@ -101,6 +118,10 @@ class _OctoHandler(_Handler):
         srv.calls.append(("POST", self.path, body))
         if not self._auth():
             return
+        if self.path == "/api/login":
+            if not srv.websocket:
+                return self._json({"error": "nf"}, 404)
+            return self._json({"name": "op", "session": "sess-1", "active": True})
         if self.path == "/api/files/local":
             srv.uploads.append(body)
             return self._json({"done": True}, 201)
@@ -112,6 +133,50 @@ class _OctoHandler(_Handler):
         if self.path.startswith("/api/files/local/"):
             return self._json(None, 204)
         self._json({"error": "nf"}, 404)
+
+
+    def _websocket(self):
+        from dashboard import wsclient
+        from tests.mock_moonraker import read_client_frame
+        srv = self.server
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", wsclient.accept_key(self.headers["Sec-WebSocket-Key"]))
+        self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True
+        sock = self.connection
+        srv.ws_count += 1
+
+        def send(obj):
+            sock.sendall(wsclient.server_frame(1, json.dumps(obj).encode()))
+
+        try:
+            send({"connected": {"version": "1.10.0"}})
+            op, data = read_client_frame(self.rfile)
+            if op != 1 or json.loads(data).get("auth") != "op:sess-1":
+                send({"reauthRequired": {"reason": "stale"}})
+                return
+            srv.ws_auth.append(json.loads(data)["auth"])
+            send({"history": srv.current()})
+            sock.settimeout(0.1)
+            while True:
+                if not srv.ws_silent:
+                    msg = srv.current()
+                    msg["temps"] = []          # like OctoPrint: most "current" messages carry no temps
+                    send({"current": msg})
+                try:
+                    op, data = read_client_frame(self.rfile)
+                    if op is None or op == 8:
+                        return
+                    if op == 9:
+                        sock.sendall(wsclient.server_frame(0xA, data))
+                except (TimeoutError, OSError, struct.error):
+                    pass
+                time.sleep(0.1)
+        except OSError:
+            return
 
 
 # ---------------------------------------------------------------- PrusaLink (Digest auth)

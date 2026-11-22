@@ -7,7 +7,7 @@ so a new protocol is one new file plus a line in `adapters/__init__.py`.
 | `type` | Adapter | Protocol | Live status | Upload | Start / pause / resume / cancel | Files | Camera | History |
 |---|---|---|---|---|---|---|---|---|
 | `klipper` | `MoonrakerAdapter` | Moonraker HTTP + WebSocket (JSON-RPC) | push (WebSocket), HTTP fallback | yes | yes | yes | Moonraker webcam list | yes |
-| `octoprint` | `OctoPrintAdapter` | OctoPrint REST, API key | polled every 5 s | yes (`.gcode`) | yes | yes | OctoPrint webcam settings | – |
+| `octoprint` | `OctoPrintAdapter` | OctoPrint REST + push WebSocket, API key | pushed (~1 s), polled every 5 s as fallback | yes (`.gcode`) | yes | yes | OctoPrint webcam settings | – |
 | `prusalink` | `PrusaLinkAdapter` | PrusaLink v1 REST, HTTP Digest | polled every 5 s | yes (`.gcode`, `.bgcode`) | yes | – | – (use `webcam_url`) | – |
 | `bambu` | `BambuAdapter` | MQTT over TLS 8883, FTPS 990, JPEG camera 6000 | push (MQTT) | only with `mode: control` + `allow_file_upload` | only with `mode: control` + `allow_remote_control` | – | P1/A1 built-in | – |
 | `marlin_serial` | `MarlinSerialAdapter` | USB serial, read-only G-code allowlist | polled every 3 s | **never** | **never** | – | `webcam_url` only | – |
@@ -59,7 +59,7 @@ Secrets (`api_key`, `access_code`, `password`) are DPAPI-encrypted on Windows; o
 | Type | Extra fields |
 |---|---|
 | `klipper` | `http_port` (Mainsail/Fluidd/Moonraker port, default 80), `ui_port`, `api_key` (optional) |
-| `octoprint` | `http_port` (default 80), `api_key` (Settings → Application Keys) |
+| `octoprint` | `http_port` (default 80), `api_key` (Settings → Application Keys), `websocket` (default `true`: live status over OctoPrint's push channel) |
 | `prusalink` | `http_port` (default 80), `username` (default `maker`), `password` (printer screen → Settings → Network) |
 | `bambu` | `access_code`, `serial`, `use_ams`, `mode` (`read_only` default / `control`), `mqtt_port` 8883, `camera_port` 6000, `ftps_port` 990 |
 | `marlin_serial` | `serial_port` (`COM3`, `/dev/ttyUSB0`), `baudrate` (115200 / 250000 …). Needs `pip install pyserial` |
@@ -78,9 +78,25 @@ the WebSocket is down, status comes from HTTP. With an API key the WebSocket use
 (`/access/oneshot_token`), so the key is never put in a URL. Klippy `shutdown`/`error` is shown as
 `error` with Klipper's message (this was shown as standby before).
 
-**OctoPrint.** OctoPrint's push channel is SockJS, which would need a dependency; REST polling
-every 5 s is enough for a dashboard. "Printer not connected" (409) is shown as offline. Webcam
+**OctoPrint (and Marlin through OctoPrint).** A Marlin printer that is plugged into a Raspberry
+Pi or PC running OctoPrint is added as type `octoprint` (*Marlin through OctoPrint*), with the
+OctoPrint address and API key, **not** as `marlin_serial`: OctoPrint owns the USB port, and this
+gives uploads, start/pause/resume/cancel and the webcam. `marlin_serial` is only for a printer
+plugged straight into the OS_3DPMS PC.
+
+Status is pushed: the adapter signs in with a passive `POST /api/login` using the API key (a
+WebSocket cannot send `X-Api-Key`), opens OctoPrint's raw SockJS WebSocket at
+`/sockjs/websocket` (standard library client, no extra package), sends `{"auth": "user:session"}`
+and `{"throttle": 2}`, and reads the `history`/`current` messages (state, job, progress,
+temperatures; temperatures are kept from the last message that had them). REST polling of
+`/api/printer` and `/api/job` every monitor cycle is used whenever the WebSocket is off
+(`"websocket": false`), refused (for example an old global API key that cannot log in), or sent
+nothing for 15 s; it reconnects with backoff up to 60 s and answers `reauthRequired` by signing in
+again. The device diagnostics show `websocket`, `websocket_error` and `reconnects`.
+"Printer not connected" (409, or *Offline* over the WebSocket) is shown as offline. Webcam
 URLs from OctoPrint's settings are used only when they point at the OctoPrint host.
+**The push channel is tested against a fake OctoPrint only**, not yet against a real one; if it
+misbehaves, set `"websocket": false` for that printer to get the old polling.
 
 **PrusaLink.** Digest authentication is computed by hand (stdlib), uploads use `PUT
 /api/v1/files/usb/<name>` with `Overwrite-File: ?0` (an existing file is never replaced unless you

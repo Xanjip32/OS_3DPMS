@@ -177,6 +177,9 @@
     <label class="field net-only">IP address or hostname
       <input id="printer-host" placeholder="192.168.0.25" spellcheck="false" autocomplete="off"></label>
     <label class="field http-only">HTTP port<input id="printer-port" type="number" min="1" max="65535" placeholder="80"></label>
+    <p class="muted octoprint-only">A Marlin printer plugged into a Raspberry Pi or PC that runs OctoPrint belongs
+      here: enter the OctoPrint address, not a USB port. Status comes live over OctoPrint's push channel, with
+      polling when that is not available.</p>
     <label class="field octoprint-only">OctoPrint API key (Settings &gt; Application Keys)
       <input id="printer-apikey" type="password" autocomplete="off"></label>
     <label class="field prusalink-only">PrusaLink password (printer screen: Settings &gt; Network)

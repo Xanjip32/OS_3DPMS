@@ -18,7 +18,7 @@ Works with a mix of printers:
 
 - **Klipper printers** with Mainsail or Fluidd (Moonraker API, live over WebSocket): Voron, Two Trees Sapphire, RatRig, Creality with Klipper, and others
 - **Bambu Lab** P1S / P1P / A1 / X1 in LAN mode, **read-only by default**
-- **Marlin printers through OctoPrint** (REST API key), for example an Anycubic Kossel
+- **Marlin printers through OctoPrint** (API key; live status over OctoPrint's push channel, polling as fallback), for example an Anycubic Kossel
 - **Prusa printers with PrusaLink** (MK4, XL, MINI; experimental)
 - **Marlin printers on USB serial** (monitor only, needs `pip install pyserial`)
 
@@ -176,9 +176,10 @@ picture is then stored by the notification service. E-mail (SMTP) is set in `con
 
 Add these in **Devices → + Add printer** (or in `config.json`):
 
-- **OctoPrint:** IP, port and an API key (OctoPrint → Settings → Application Keys).
+- **Marlin through OctoPrint:** IP, port and an API key (OctoPrint → Settings → Application Keys).
+  A Marlin printer on a Raspberry Pi or PC with OctoPrint belongs here, not under USB serial.
 - **PrusaLink:** IP, user `maker` and the password from the printer screen (Settings → Network).
-- **Marlin USB serial:** the COM port and baud rate. Close other programs using the port first.
+- **Marlin USB serial:** only for a printer plugged into this PC. The COM port and baud rate. Close other programs using the port first.
   Monitor only: no uploads or print control over raw serial.
 - **Bambu modes:** new and existing Bambu printers start in **read-only** mode (status and camera,
   no commands). Set *Mode* to *Control* and tick the switches to allow uploads and
