@@ -4,7 +4,7 @@ const FRAME_MS = 200;               // grid refresh on the printer PC: about 5 p
 const REMOTE_FRAME_MS = 1000;       // over Tailscale (often a phone): 1 a second, so links are not overrun
 const STALE_MS = 20000;             // keep showing the last picture this long before explaining the gap
 const STATUS_MS = 5000;
-const UPLOAD_RE = /\.(gcode|gco|g|3mf)$/i;
+const UPLOAD_RE = /\.(gcode|gco|g|3mf|bgcode)$/i;
 const ACTIVE = new Set(['printing', 'paused']);
 const $ = id => document.getElementById(id);
 const grid = $('grid');
@@ -78,6 +78,52 @@ function stateText(st) {
 
 function chip(st) {
   return el('span', { class: 'chip ' + ((st && st.state) || ''), text: stateText(st) });
+}
+
+function caps(p) {
+  return p.capabilities || {};
+}
+
+const TYPE_NAMES = { klipper: 'Klipper', bambu: 'Bambu Lab', octoprint: 'OctoPrint (Marlin)',
+  prusalink: 'PrusaLink', marlin_serial: 'Marlin (USB)' };
+
+function temp(t) {
+  if (!t || t.actual == null) return null;
+  return t.target ? `${Math.round(t.actual)}/${Math.round(t.target)}°` : `${Math.round(t.actual)}°`;
+}
+
+function duration(s) {
+  if (s == null) return '';
+  const m = Math.round(s / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
+}
+
+function tempsText(st) {
+  if (!st) return '';
+  const t = st.temperatures || {};
+  const parts = [];
+  if (temp(t.nozzle)) parts.push(`Nozzle ${temp(t.nozzle)}`);
+  if (temp(t.bed)) parts.push(`Bed ${temp(t.bed)}`);
+  if (temp(t.chamber)) parts.push(`Chamber ${temp(t.chamber)}`);
+  if (ACTIVE.has(st.state) && st.remaining_s != null) parts.push(`${duration(st.remaining_s)} left`);
+  if (ACTIVE.has(st.state) && st.layer && st.layer.total) parts.push(`Layer ${st.layer.current}/${st.layer.total}`);
+  return parts.join(' · ');
+}
+
+// Pause, resume, cancel: only what the printer's adapter allows, and cancel asks first.
+async function control(p, action) {
+  if (action === 'cancel' && !confirm(`Cancel the print on ${p.name}?\n\nThis cannot be undone.`)) return;
+  try {
+    const r = await fetch(`/api/printers/${encodeURIComponent(p.id)}/${action}`, {
+      method: 'POST', headers: { 'X-Dashboard': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: p.id }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    toast(data.message);
+  } catch (e) {
+    toast(`${p.name}: ${e.message}`, true);
+  }
 }
 
 function canMainsail(p) {
@@ -199,10 +245,29 @@ function buildTile(p) {
     cameraObserver.unobserve(t);
     clearImage(img);
   };
+  const c = caps(p);
+  q('.meta').textContent = [p.manufacturer, p.model, p.location].filter(Boolean).join(' · ');
+  if (!c.can_upload || info.can_control === false) sendBtn.remove();
+  if (!c.can_start_print) q('.confirm label').remove();
+  q('.pause').addEventListener('click', () => control(p, 'pause'));
+  q('.resume').addEventListener('click', () => control(p, 'resume'));
+  q('.stop').addEventListener('click', () => control(p, 'cancel'));
+  q('.details').addEventListener('click', () => openDetails(p));
   t.update = st => {
     chipEl.textContent = st && st.state ? stateText(st) : '';
     chipEl.className = 'chip ' + ((st && st.state) || '');
     if (!busy) fileLine.textContent = st && ACTIVE.has(st.state) ? (st.file || '') : '';
+    q('.temps').textContent = tempsText(st);
+    const alerts = st ? [...(st.errors || []), ...(st.warnings || [])] : [];
+    const alertEl = q('.alert');
+    alertEl.textContent = alerts.slice(0, 2).join(' · ');
+    alertEl.classList.toggle('hidden', !alerts.length);
+    alertEl.classList.toggle('bad', !!(st && st.errors && st.errors.length));
+    const state = st && st.state;
+    const may = info.can_control !== false;
+    q('.pause').classList.toggle('hidden', !(may && c.can_pause && state === 'printing'));
+    q('.resume').classList.toggle('hidden', !(may && c.can_resume && state === 'paused'));
+    q('.stop').classList.toggle('hidden', !(may && c.can_cancel && ACTIVE.has(state)));
   };
   t.pick = () => input.click();
   t.isBusy = () => busy;
@@ -296,11 +361,11 @@ function buildTile(p) {
     pending = null;
   });
 
-  function upload(file, start) {
+  function upload(file, start, overwrite) {
     busy = true;
     sendBtn.disabled = true;
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/upload/${id}?name=${encodeURIComponent(file.name)}&print=${start ? 1 : 0}`);
+    xhr.open('POST', `/api/upload/${id}?name=${encodeURIComponent(file.name)}&print=${start ? 1 : 0}${overwrite ? '&overwrite=1' : ''}`);
     xhr.setRequestHeader('X-Dashboard', '1');
     xhr.upload.addEventListener('progress', e => {
       if (!e.lengthComputable) return;
@@ -319,7 +384,10 @@ function buildTile(p) {
       let r = {};
       try { r = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
       if (xhr.status === 200 && r.ok) done(true, r.message);
-      else done(false, `${p.name}: ${r.error || 'upload failed (' + xhr.status + ')'}`);
+      else if (xhr.status === 409 && r.exists && !overwrite) {
+        done(true, `${p.name} already has ${file.name}`);
+        if (confirm(`${p.name} already has a file named ${file.name}. Replace it?`)) upload(file, start, true);
+      } else done(false, `${p.name}: ${r.error || 'upload failed (' + xhr.status + ')'}`);
     });
     xhr.addEventListener('error', () => done(false, `${p.name}: lost connection to dashboard`));
     xhr.send(file);
@@ -335,8 +403,11 @@ let view = load('os3dpms.view', 'grid');
 let query = '';
 let hiddenIds = new Set(load('os3dpms.hidden', []));
 
+let locationFilter = load('os3dpms.location', '');
+
 function matches(p) {
   if (query && !p.name.toLowerCase().includes(query)) return false;
+  if (locationFilter && (p.location || '') !== locationFilter) return false;
   const active = ACTIVE.has(stateOf(p));
   return filter === 'all' || (filter === 'active' ? active : !active);
 }
@@ -356,6 +427,18 @@ document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click'
   refresh();
 }));
 $('search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); refresh(); });
+$('location-filter').addEventListener('change', e => { locationFilter = e.target.value; save('os3dpms.location', locationFilter); refresh(); });
+
+// Locations come from the printers' "Location" setting (multi-site fleets).
+function renderLocations() {
+  const sel = $('location-filter');
+  const locations = [...new Set(printers.map(p => p.location).filter(Boolean))].sort();
+  if (locationFilter && !locations.includes(locationFilter)) locationFilter = '';
+  sel.replaceChildren(el('option', { value: '', text: 'All locations' }),
+    ...locations.map(l => el('option', { value: l, text: l })));
+  sel.value = locationFilter;
+  sel.classList.toggle('hidden', !locations.length);
+}
 $('device-search').addEventListener('input', () => renderDevices());
 
 function hidePrinter(id, hide) {
@@ -381,6 +464,7 @@ function render() {
     if (!printers.some(p => p.id === id)) { tile.stop(); tiles.delete(id); }
   }
   grid.replaceChildren(...printers.filter(p => tiles.has(p.id)).map(p => tiles.get(p.id)));
+  renderLocations();
   refresh();
 }
 
@@ -447,7 +531,7 @@ async function saveDevices(list) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Dashboard': '1' },
     // Leaving a code out keeps the saved one; the has_ markers only describe it.
-    body: JSON.stringify({ printers: list.map(({ has_access_code, has_api_key, ...x }) => x) }),
+    body: JSON.stringify({ printers: list.map(({ has_access_code, has_api_key, has_password, ...x }) => x) }),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok || !data.ok) throw new Error(data.error || `HTTP ${r.status}`);
@@ -469,8 +553,25 @@ const printerDialog = $('printer-dialog');
 let editing = null;   // saved settings of the printer being edited; null while adding one
 const slug = text => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'printer';
 const showBambuFields = () => {
-  printerDialog.querySelector('.bambu-only').hidden = (editing ? editing.type : $('printer-type').value) !== 'bambu';
+  const type = editing ? editing.type : $('printer-type').value;
+  const show = (cls, on) => printerDialog.querySelectorAll(cls).forEach(x => { x.hidden = !on; });
+  show('.bambu-only', type === 'bambu');
+  show('.net-only', type !== 'marlin_serial');
+  show('.http-only', ['klipper', 'octoprint', 'prusalink'].includes(type));
+  show('.octoprint-only', type === 'octoprint');
+  show('.prusalink-only', type === 'prusalink');
+  show('.serial-only', type === 'marlin_serial');
+  show('.control-only', type !== 'marlin_serial');
+  $('printer-host').required = type !== 'marlin_serial';
+  const bambuReadOnly = type === 'bambu' && $('printer-mode').value !== 'control';
+  ['printer-allow-upload', 'printer-allow-control'].forEach(i => { $(i).disabled = bambuReadOnly; });
 };
+$('printer-mode').addEventListener('change', showBambuFields);
+$('printer-type').addEventListener('change', () => {   // new printer: start from the safe default for its type
+  const open = !['bambu', 'marlin_serial'].includes($('printer-type').value);
+  $('printer-allow-upload').checked = open;
+  $('printer-allow-control').checked = open;
+});
 $('printer-type').addEventListener('change', showBambuFields);
 $('printer-cancel').addEventListener('click', () => printerDialog.close());
 document.querySelectorAll('.add-printer').forEach(b => b.addEventListener('click', () => openPrinterDialog(null)));
@@ -488,6 +589,19 @@ async function openPrinterDialog(id) {
   $('printer-code').placeholder = editing?.has_access_code ? 'saved (leave empty to keep it)' : '';
   $('printer-serial').value = editing?.serial || '';
   $('printer-rotate').value = String(editing?.rotate || 0);
+  $('printer-port').value = editing?.http_port || '';
+  $('printer-apikey').value = '';
+  $('printer-apikey').placeholder = editing?.has_api_key ? 'saved (leave empty to keep it)' : '';
+  $('printer-password').value = '';
+  $('printer-password').placeholder = editing?.has_password ? 'saved (leave empty to keep it)' : '';
+  $('printer-serialport').value = editing?.serial_port || '';
+  $('printer-baud').value = String(editing?.baudrate || 115200);
+  $('printer-location').value = editing?.location || '';
+  $('printer-mode').value = editing?.mode || 'read_only';
+  const type = editing ? editing.type : $('printer-type').value;
+  const defaultAllow = !['bambu', 'marlin_serial'].includes(type);
+  $('printer-allow-upload').checked = editing ? !!editing.allow_file_upload : defaultAllow;
+  $('printer-allow-control').checked = editing ? !!editing.allow_remote_control : defaultAllow;
   $('printer-msg').textContent = '';
   showBambuFields();
   printerDialog.showModal();
@@ -504,10 +618,22 @@ $('printer-form').addEventListener('submit', async e => {
     const list = await devicesList();
     const type = editing ? editing.type : $('printer-type').value;
     const fields = { name: $('printer-name').value.trim(), host: $('printer-host').value.trim(),
-      rotate: Number($('printer-rotate').value) };
+      rotate: Number($('printer-rotate').value), location: $('printer-location').value.trim(),
+      allow_file_upload: $('printer-allow-upload').checked, allow_remote_control: $('printer-allow-control').checked };
     if (type === 'bambu') {
       fields.serial = $('printer-serial').value.trim();
+      fields.mode = $('printer-mode').value;
       if ($('printer-code').value.trim()) fields.access_code = $('printer-code').value.trim();
+    }
+    if (['klipper', 'octoprint', 'prusalink'].includes(type) && $('printer-port').value) {
+      fields.http_port = Number($('printer-port').value);
+    }
+    if (type === 'octoprint' && $('printer-apikey').value.trim()) fields.api_key = $('printer-apikey').value.trim();
+    if (type === 'prusalink' && $('printer-password').value) fields.password = $('printer-password').value;
+    if (type === 'marlin_serial') {
+      fields.serial_port = $('printer-serialport').value.trim();
+      fields.baudrate = Number($('printer-baud').value);
+      delete fields.host;
     }
     if (editing) {
       const i = list.findIndex(x => x.id === editing.id);
@@ -589,7 +715,8 @@ function renderDevices() {
   const rows = printers.filter(p => !term || p.name.toLowerCase().includes(term) || (p.type || '').includes(term));
   box.replaceChildren(table([
     { label: 'Name', cell: p => el('b', { text: p.name }) },
-    { label: 'Type', cell: p => (p.type === 'bambu' ? 'Bambu Lab' : 'Klipper') },
+    { label: 'Type', cell: p => TYPE_NAMES[p.type] || p.type },
+    { label: 'Location', class: 'muted', cell: p => p.location || '—' },
     { label: 'Status', cell: p => chip(statuses.get(p.id)) },
     { label: 'Progress', cell: progressCell },
     { label: 'Camera', class: 'muted', cell: p => (hiddenIds.has(p.id) ? 'Hidden on this device' : (p.rotate ? `Rotated ${p.rotate}°` : 'Shown')) },
@@ -973,10 +1100,81 @@ async function pollEvents() {
   setTimeout(pollEvents, 5000);
 }
 
+// ---------------------------------------------------------------- printer details
+const detailDialog = $('detail-dialog');
+$('detail-close').addEventListener('click', () => detailDialog.close());
+
+function dl(pairs) {
+  const list = el('dl');
+  for (const [k, v] of pairs) {
+    if (v === undefined || v === null || v === '') continue;
+    list.append(el('dt', { text: k }), el('dd', { text: typeof v === 'object' ? JSON.stringify(v) : String(v) }));
+  }
+  return list;
+}
+
+function tempChart(samples) {
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'temp-chart');
+  svg.setAttribute('viewBox', '0 0 300 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  if (samples.length < 2) return svg;
+  const t0 = samples[0][0];
+  const span = Math.max(1, samples[samples.length - 1][0] - t0);
+  const max = Math.max(50, ...samples.flatMap(s => [s[1] || 0, s[2] || 0])) * 1.1;
+  [[1, 'nozzle'], [2, 'bed']].forEach(([i, cls]) => {
+    const pts = samples.filter(s => s[i] != null).map(s => `${((s[0] - t0) / span * 300).toFixed(1)},${(100 - s[i] / max * 100).toFixed(1)}`);
+    const line = document.createElementNS(svgNS, 'polyline');
+    line.setAttribute('class', cls);
+    line.setAttribute('points', pts.join(' '));
+    svg.append(line);
+  });
+  return svg;
+}
+
+async function openDetails(p) {
+  $('detail-title').textContent = p.name;
+  const body = $('detail-body');
+  body.replaceChildren(el('p', { text: 'Loading…' }));
+  detailDialog.showModal();
+  const get = async path => { const r = await fetch(path); return r.ok ? r.json() : { error: `HTTP ${r.status}` }; };
+  const id = encodeURIComponent(p.id);
+  const [d, temps, diag] = await Promise.all([get(`/api/printers/${id}`), get(`/api/printers/${id}/temperatures`),
+    get(`/api/printers/${id}/diagnostics`)]);
+  const st = d.status || {};
+  const c = d.capabilities || {};
+  const card = (title, ...kids) => el('div', { class: 'card' }, el('h3', { text: title }), ...kids);
+  body.replaceChildren(el('div', { class: 'detail-grid' },
+    card('Live status', dl([['State', stateText(st)], ['File', st.file], ['Remaining', duration(st.remaining_s)],
+      ['Temperatures', tempsText(st)], ['Fan', st.fan != null ? `${Math.round(st.fan * 100)}%` : ''],
+      ['Position', st.position ? st.position.map(v => (v == null ? '?' : Number(v).toFixed(1))).join(', ') : ''],
+      ['Errors', (st.errors || []).join('; ')], ['Warnings', (st.warnings || []).join('; ')]])),
+    card('Temperatures (30 min)', tempChart(temps.samples || []),
+      el('p', { class: 'muted', text: 'Red: nozzle · Blue: bed' })),
+    card('Printer', dl([['Type', TYPE_NAMES[p.type] || p.type], ['Protocol', d.protocol], ['Manufacturer', d.manufacturer],
+      ['Model', d.model], ['Location', d.location],
+      ['Can do', Object.keys(c).filter(k => c[k]).map(k => k.replace(/^(can_|has_)/, '').replace('_', ' ')).join(', ')]])),
+    card('Connection', dl([['Online', d.connection ? (d.connection.online ? 'yes' : 'no') : ''],
+      ['Last answer', d.connection && d.connection.last_seen ? new Date(d.connection.last_seen * 1000).toLocaleString() : ''],
+      ['Transport', st.transport], ['Last error', diag.last_error], ['WebSocket', diag.websocket],
+      ['MQTT', diag.mqtt_connected], ['Mode', diag.mode], ['Firmware', diag.firmware ? diag.firmware.firmware_name : '']])),
+    card('Print history', table([
+      { label: 'File', cell: j => j.file }, { label: 'Result', cell: j => j.status },
+      { label: 'Started', class: 'muted', cell: j => j.started || '' }], (d.history || []).slice(0, 10)))));
+}
+
 // ---------------------------------------------------------------- start
 function showUser() {
   const who = info.admin ? 'This PC (admin)' : (info.user || '');
   $('who').textContent = who;
+  if (info.password_login && !document.getElementById('logout')) {
+    const out = el('button', { id: 'logout', text: 'Sign out', onclick: async () => {
+      await fetch('/api/logout', { method: 'POST', headers: { 'X-Dashboard': '1' } });
+      location.href = '/login';
+    } });
+    $('who').after(out);
+  }
   $('who').classList.toggle('hidden', !who);
   document.querySelectorAll('.admin-only').forEach(a => a.classList.toggle('hidden', !info.admin));
   document.querySelectorAll('.can-edit').forEach(a => a.classList.toggle('hidden', !info.can_edit));
@@ -987,6 +1185,7 @@ async function start() {
   try {
     const me = await fetch('/api/me');
     info = await me.json();
+    if (me.status === 401 && info.login) { location.href = info.login; return; }
     if (!me.ok) { notice(grid, info.error || 'Access denied'); return; }
     showUser();
     maxUploadMb = info.max_upload_mb || maxUploadMb;

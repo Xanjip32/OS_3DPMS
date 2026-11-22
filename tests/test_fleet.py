@@ -15,10 +15,16 @@ class FleetTests(FleetFixture):
     offline = 3
 
     def test_ten_printers_polled_concurrently_offline_ones_isolated(self):
+        import concurrent.futures
+        m = self.app.monitor
+        concurrent.futures.wait(list(m.inflight.values()), 20)  # the App's own first round
+        m.next_poll.clear()
         t0 = time.time()
-        self.app.monitor.poll_once()
+        m.poll_once(wait=20)
         elapsed = time.time() - t0
-        self.assertLess(elapsed, 4.5, "one round must not add up per-printer timeouts")
+        # Sequential polling would add each offline printer's connect timeout (Windows retries a
+        # refused local connection for ~2 s each); concurrent polling costs about one of them.
+        self.assertLess(elapsed, 5.0, "one round must not add up per-printer timeouts")
         status = self.app.monitor.status
         for i in range(10):
             self.assertEqual(status["mr-%d" % i]["state"], "printing")

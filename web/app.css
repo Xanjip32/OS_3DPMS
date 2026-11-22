@@ -298,3 +298,32 @@ ul.ports { margin: 6px 0; padding-left: 18px; color: var(--muted); }
 .login-box label { display: grid; gap: 4px; margin-bottom: 12px; font-weight: 600; }
 .login-box input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; }
 .login-error { color: var(--bad); min-height: 1.5em; margin: 8px 0 0; }
+
+/* ---------------------------------------------------------------- adapters: temperatures, controls, details */
+.meta, .temps { padding: 2px 14px 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden;
+                text-overflow: ellipsis; }
+.temps { color: var(--text); font-variant-numeric: tabular-nums; }
+.meta:empty, .temps:empty { display: none; }
+.alert { margin: 6px 14px 0; padding: 4px 8px; border-radius: 6px; background: var(--warn-bg); color: var(--warn);
+         font-size: 12px; }
+.alert.bad { background: var(--bad-bg); color: var(--bad); }
+.controls { display: flex; gap: 6px; padding: 8px 14px 0; }
+.controls button { padding: 4px 10px; font-size: 13px; }
+.controls button.stop { color: var(--bad); }
+#location-filter { width: auto; flex: 0 0 auto; max-width: 220px; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+.form-dialog .net-only[hidden], .form-dialog .http-only[hidden], .form-dialog .octoprint-only[hidden],
+.form-dialog .prusalink-only[hidden], .form-dialog .serial-only[hidden], .form-dialog .control-only[hidden] { display: none; }
+.form-dialog .serial-only, .form-dialog .control-only { display: grid; gap: 8px; }
+.form-dialog label.check { display: flex; gap: 8px; align-items: center; }
+.form-dialog.wide { width: min(760px, calc(100vw - 32px)); }
+.detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.detail-head h2 { margin: 0; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.detail-grid .card { padding: 12px; }
+.detail-grid dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 13px; }
+.detail-grid dt { color: var(--muted); }
+.detail-grid dd { margin: 0; overflow-wrap: anywhere; }
+.temp-chart { width: 100%; height: 120px; background: #f2f5f8; border-radius: 6px; }
+.temp-chart .nozzle { stroke: #c0392b; } .temp-chart .bed { stroke: #1559a2; }
+.temp-chart polyline { fill: none; stroke-width: 1.5; }
+.detail-body pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto; }

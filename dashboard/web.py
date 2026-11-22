@@ -276,6 +276,7 @@ class App:
             item = {k: p[k] for k in EDITABLE_FIELDS if k in p}
             item["has_access_code"] = bool(p.get("access_code") or p.get("access_code_protected"))
             item["has_api_key"] = bool(p.get("api_key") or p.get("api_key_protected"))
+            item["has_password"] = bool(p.get("password") or p.get("password_protected"))
             printers.append(item)
         n = self.cfg["notifications"]
         notifications = {
