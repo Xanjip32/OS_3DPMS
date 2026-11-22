@@ -30,6 +30,8 @@
   `/api/locations`, `/api/history`
 - Uploads check the file type per printer (`.3mf` only for Bambu, `.bgcode` for PrusaLink) and
   ask before overwriting an existing file
+- Setup page: add OctoPrint, PrusaLink and Marlin USB printers (*+ Other type*), Bambu mode and
+  location per printer
 - Secrets can come from environment variables (`api_key_env`, `access_code_env`, ...)
 - Fixed a flaky Mainsail forward test (port reuse race)
 - Docs: `docs/ASSESSMENT.md`, `ADAPTERS.md`, `BAMBU.md`, `REMOTE_ACCESS.md`, `NOTIFICATIONS.md`,

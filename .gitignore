@@ -12,6 +12,8 @@ tmp/
 files/
 queue.json
 queue.json.bad
+history.json
+history.json.tmp
 dev-data/
 dist/
 
