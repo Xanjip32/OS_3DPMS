@@ -16,7 +16,9 @@ log = logging.getLogger("dashboard.adapters.octoprint")
 
 
 def state_from(printer, job):
-    """Normalized state from /api/printer and /api/job answers."""
+    """Normalized state from /api/printer and /api/job answers (printer None: 409, not connected)."""
+    if printer is None:
+        return "offline", "OctoPrint is not connected to the printer"
     flags = ((printer or {}).get("state") or {}).get("flags") or {}
     text = ((printer or {}).get("state") or {}).get("text") or (job or {}).get("state") or ""
     completion = ((job or {}).get("progress") or {}).get("completion")

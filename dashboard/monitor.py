@@ -94,8 +94,8 @@ class Monitor:
         threading.Thread(target=self._url_loop, daemon=True, name="public-url").start()
 
     def stop(self):
+        """Stop the background loop. poll_once() still works (tests drive it by hand)."""
         self.stopped.set()
-        self.pool.shutdown(wait=False)
 
     def _run(self):
         while not self.stopped.is_set():

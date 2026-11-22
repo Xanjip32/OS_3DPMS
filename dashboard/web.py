@@ -847,9 +847,9 @@ class Handler(BaseHTTPRequestHandler):
         except adapters.AdapterError as e:
             code = 403 if isinstance(e, adapters.NotAuthorized) else 409 if isinstance(e, adapters.PrinterBusy) \
                 else 400 if isinstance(e, adapters.NotSupported) else 502
-            app.audit(user, "control", printer=pid, action=action, result="refused", error=str(e)[:200])
+            app.audit(user, "printer-" + action, printer=pid, result="refused", error=str(e)[:200])
             return self.send_json(code, {"ok": False, "error": str(e)[:300]})
-        app.audit(user, "control", printer=pid, action=action, result="ok")
+        app.audit(user, "printer-" + action, printer=pid, result="ok")
         log.info("%s: %s on %s", user, action, pid)
         self.send_json(200, {"ok": True, "message": msg})
 
@@ -1295,6 +1295,40 @@ def setup_logging(data_dir):
         root.addHandler(sh)
 
 
+def manage_user(args, password=None):
+    """--add-user / --remove-user: edit the users list in config.json (only password hashes are stored)."""
+    import getpass
+    if not os.path.exists(args.config):
+        config.write_default(args.config)
+    raw = config.read_raw(args.config)
+    users = [u for u in raw.get("users") or [] if isinstance(u, dict)]
+    name = (args.add_user or args.remove_user).strip().lower()
+    if not auth.USER_RE.match(name):
+        print("User names may use a-z, 0-9 and . _ @ - (up to 64 characters).")
+        return 2
+    users = [u for u in users if u.get("name") != name]
+    if args.add_user:
+        if password is None:
+            password = getpass.getpass("Password for %s (10+ characters): " % name)
+            if password != getpass.getpass("Same password again: "):
+                print("The passwords differ; nothing changed.")
+                return 2
+        try:
+            users.append({"name": name, "password_hash": auth.hash_password(password), "role": args.role})
+        except ValueError as e:
+            print(e)
+            return 2
+    raw["users"] = users
+    try:
+        cfg = config.validate(raw)
+    except config.ConfigError as e:
+        print("config.json: %s" % e)
+        return 2
+    config.save(args.config, cfg)
+    print("%s %s. Restart OS_3DPMS to apply." % (name, "saved as %s" % args.role if args.add_user else "removed"))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="OS_3DPMS", description="3D printer camera dashboard")
     parser.add_argument("--config", default=os.path.join(ROOT, "config.json"))
@@ -1302,7 +1336,13 @@ def main(argv=None):
     parser.add_argument("--open-setup", action="store_true", help="open the setup page in a browser")
     parser.add_argument("--install-tailscale", action="store_true",
                         help="download, verify and install Tailscale (Windows), then exit")
+    parser.add_argument("--add-user", metavar="NAME", help="add or update a dashboard login (asks for the password)")
+    parser.add_argument("--role", default="operator", choices=auth.ROLES, help="role for --add-user")
+    parser.add_argument("--remove-user", metavar="NAME", help="remove a dashboard login")
     args = parser.parse_args(argv)
+
+    if args.add_user or args.remove_user:
+        return manage_user(args)
 
     if args.install_tailscale:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
