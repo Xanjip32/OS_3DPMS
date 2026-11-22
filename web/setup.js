@@ -244,6 +244,11 @@ function field(label, input) {
   return el('label', { class: 'field' }, label, input);
 }
 
+const TYPE_TITLES = {
+  klipper: 'Klipper / Mainsail', bambu: 'Bambu Lab', octoprint: 'OctoPrint (Marlin)',
+  prusalink: 'PrusaLink', marlin_serial: 'Marlin USB serial (monitor only)',
+};
+
 function renderPrinters(checkIds = new Set()) {
   const list = $('printer-list');
   list.replaceChildren();
@@ -260,13 +265,13 @@ function renderPrinters(checkIds = new Set()) {
     };
     const rotate = el('select', {}, ...[0, 90, 180, 270].map(d => el('option', { value: String(d), text: `${d}°` })));
     const fields = el('div', { class: 'field-grid' },
-      field('Printer name', bind('name', el('input', { placeholder: p.type === 'bambu' ? 'Bambu P1S' : 'Voron 500' }))),
+      field('Printer name', bind('name', el('input', { placeholder: { bambu: 'Bambu P1S', klipper: 'Voron 500' }[p.type] || 'Kossel' }))),
       field('IP address or hostname', bind('host', el('input', {
         name: 'host', placeholder: '192.168.0.23', spellcheck: 'false', autocomplete: 'off',
       }))));
     const advanced = el('div', { class: 'field-grid' });
     const row = el('div', { class: 'printer-row', ...(p.id ? { id: `printer-${p.id}` } : {}) },
-      el('div', { class: 'kind' }, el('span', { text: p.type === 'bambu' ? 'Bambu Lab' : 'Klipper / Mainsail' }),
+      el('div', { class: 'kind' }, el('span', { text: TYPE_TITLES[p.type] || p.type }),
         el('button', { class: 'quiet', text: 'Remove', onclick: () => { printers.splice(i, 1); renderPrinters(); renderFound(lastFound); } })),
       fields,
       el('details', { class: 'printer-advanced' }, el('summary', { text: 'Advanced settings' }), advanced));
@@ -277,6 +282,22 @@ function renderPrinters(checkIds = new Set()) {
       advanced.append(field('Moonraker API key', bind('api_key', el('input', {
         type: 'password', autocomplete: 'off', placeholder: p.has_api_key ? 'saved (leave empty to keep)' : 'only if Moonraker needs it',
       }))));
+    } else if (p.type === 'octoprint' || p.type === 'prusalink') {
+      advanced.append(field('Printer HTTP port', bind('http_port', el('input', { type: 'number', min: '1', max: '65535', placeholder: '80' }))));
+      if (p.type === 'octoprint') {
+        fields.append(field('OctoPrint API key', bind('api_key', el('input', {
+          type: 'password', autocomplete: 'off', placeholder: p.has_api_key ? 'saved (leave empty to keep)' : 'Settings > Application Keys',
+        }))));
+      } else {
+        fields.append(field('PrusaLink user', bind('username', el('input', { placeholder: 'maker', autocomplete: 'off' }))));
+        fields.append(field('PrusaLink password', bind('password', el('input', {
+          type: 'password', autocomplete: 'off', placeholder: p.has_password ? 'saved (leave empty to keep)' : 'printer screen > Settings > Network',
+        }))));
+      }
+    } else if (p.type === 'marlin_serial') {
+      fields.querySelector('input[name="host"]').closest('label').remove();
+      fields.append(field('Serial port', bind('serial_port', el('input', { placeholder: 'COM3 or /dev/ttyUSB0', spellcheck: 'false' }))));
+      fields.append(field('Baud rate', bind('baudrate', el('input', { type: 'number', placeholder: '115200' }), 'int')));
     } else {
       // Shown as plain text: the code is on the printer screen anyway, and a hidden field hides
       // typing mistakes such as Caps Lock (access codes are case-sensitive).
@@ -286,7 +307,12 @@ function renderPrinters(checkIds = new Set()) {
       }))));
       advanced.append(field('Serial number (for remote start)', bind('serial', el('input', { placeholder: 'Optional' }))));
       advanced.append(el('label', { class: 'check' }, bind('use_ams', el('input', { type: 'checkbox' }), 'bool'), 'Print from AMS'));
+      if (!p.mode) p.mode = 'read_only';
+      advanced.append(field('Mode', bind('mode', el('select', {},
+        el('option', { value: 'read_only', text: 'Read-only: status and camera, no commands' }),
+        el('option', { value: 'control', text: 'Control: allow the switches on the Devices page' })))));
     }
+    advanced.append(field('Location', bind('location', el('input', { placeholder: 'Office, Lab, Room 2…' }))));
     advanced.append(field('Camera URL override', bind('webcam_url', el('input', {
       placeholder: 'http://camera-ip/webcam/?action=stream',
     }))));
@@ -358,6 +384,7 @@ function renderPrinters(checkIds = new Set()) {
 function addPrinter(type) {
   const p = { type, name: '', host: '', rotate: 0 };
   if (type === 'klipper') p.ui_port = nextUiPort();
+  if (type === 'marlin_serial') Object.assign(p, { host: '', serial_port: '', baudrate: 115200 });
   printers.push(p);
   renderPrinters();
   const row = $('printer-list').lastElementChild;
@@ -368,6 +395,10 @@ function addPrinter(type) {
 }
 $('add-klipper').addEventListener('click', () => addPrinter('klipper'));
 $('add-bambu').addEventListener('click', () => addPrinter('bambu'));
+$('add-other').addEventListener('change', e => {
+  if (e.target.value) addPrinter(e.target.value);
+  e.target.value = '';
+});
 
 // ---------------------------------------------------------------- find printers on the network
 const sameHost = (a, b) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
@@ -496,7 +527,7 @@ function renderLegacy(legacy) {
 const saveBtn = $('save');
 saveBtn.addEventListener('click', async () => {
   const msg = $('save-msg');
-  const missingHost = printers.findIndex(p => !p.host);
+  const missingHost = printers.findIndex(p => !p.host && p.type !== 'marlin_serial');
   if (missingHost !== -1) {
     msg.className = 'msg bad';
     msg.textContent = `Enter the IP address or hostname for printer ${missingHost + 1}, or remove that row.`;
@@ -509,6 +540,7 @@ saveBtn.addEventListener('click', async () => {
     const item = Object.assign({}, p);
     delete item.has_access_code;
     delete item.has_api_key;
+    delete item.has_password;
     if (!item.id) item.id = slug(item.name);
     let id = item.id, n = 2;
     while (used.has(id)) id = `${item.id}-${n++}`;

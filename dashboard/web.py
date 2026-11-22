@@ -401,6 +401,8 @@ class App:
                         p[field + "_protected"] = prev[field + "_protected"]
                     elif prev.get(field):
                         p[field] = prev[field]
+                    elif prev.get(field + "_env"):   # Linux/macOS: secret from the environment, set in the file
+                        p[field + "_env"] = prev[field + "_env"]
                 printers.append(p)
             raw["printers"] = printers
         if "allowed_users" in payload:

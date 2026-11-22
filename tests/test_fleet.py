@@ -162,5 +162,27 @@ class ReadOnlyUserTests(FleetFixture):
         self.assertEqual(self.mr[0].posts, [])
 
 
+class SetupRoundTripTests(FleetFixture):
+    moonrakers = 1
+
+    def test_setup_save_keeps_every_printer_field(self):
+        from dashboard import config
+        raw = config.read_raw(self.cfg_path)
+        raw["printers"].append({"id": "usb", "name": "USB", "type": "marlin_serial", "serial_port": "COM7",
+                                "baudrate": 250000, "location": "Lab"})
+        raw["printers"][-2].update(mode="control", allow_remote_control=True, access_code_env="P1S_CODE")
+        raw["printers"][-2].pop("access_code", None)
+        config.save(self.cfg_path, config.validate(raw))
+        self.app.reload()
+        before = config.read_raw(self.cfg_path)["printers"]
+        self.maxDiff = None
+        resp, data = self.request("GET", "/api/setup/config", admin=True)
+        printers = [{k: v for k, v in p.items() if not k.startswith("has_")} for p in json.loads(data)["printers"]]
+        resp, data = self.request("POST", "/api/setup/config", {"printers": printers},
+                                  {"X-Dashboard": "1"}, admin=True)
+        self.assertEqual(resp.status, 200, data)
+        self.assertEqual(config.read_raw(self.cfg_path)["printers"], before)
+
+
 if __name__ == "__main__":
     unittest.main()

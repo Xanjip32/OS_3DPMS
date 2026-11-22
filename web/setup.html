@@ -25,6 +25,12 @@
       <button class="primary" id="discover" title="Search this PC's network for Klipper and Bambu Lab printers">Find printers on my network</button>
       <button id="add-klipper">+ Add Klipper</button>
       <button id="add-bambu">+ Add Bambu</button>
+      <select id="add-other" aria-label="Add another printer type">
+        <option value="">+ Other type…</option>
+        <option value="octoprint">OctoPrint (Marlin)</option>
+        <option value="prusalink">PrusaLink</option>
+        <option value="marlin_serial">Marlin USB serial (monitor only)</option>
+      </select>
     </div>
     <div id="discover-results" class="discover-results" hidden></div>
     <div id="printer-list"></div>
