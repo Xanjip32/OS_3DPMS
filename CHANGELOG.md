@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Bambu **AMS** is a toggle in Devices > Edit ("AMS connected"). With it off, the AMS panel and
+  the "AMS reports no filament loaded" warning/alerts are hidden, so a printer used without an AMS
+  no longer spams that warning
+
 ### Universal printer adapters (branch `feature/universal-adapters`)
 
 - **Bambu remote control is now opt-in:** newly added Bambu printers are **read-only by default**

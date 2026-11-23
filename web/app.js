@@ -588,6 +588,7 @@ async function openPrinterDialog(id) {
   $('printer-code').value = '';
   $('printer-code').placeholder = editing?.has_access_code ? 'saved (leave empty to keep it)' : '';
   $('printer-serial').value = editing?.serial || '';
+  $('printer-ams').checked = !!editing?.use_ams;
   $('printer-rotate').value = String(editing?.rotate || 0);
   $('printer-port').value = editing?.http_port || '';
   $('printer-apikey').value = '';
@@ -622,6 +623,7 @@ $('printer-form').addEventListener('submit', async e => {
       allow_file_upload: $('printer-allow-upload').checked, allow_remote_control: $('printer-allow-control').checked };
     if (type === 'bambu') {
       fields.serial = $('printer-serial').value.trim();
+      fields.use_ams = $('printer-ams').checked;
       fields.mode = $('printer-mode').value;
       if ($('printer-code').value.trim()) fields.access_code = $('printer-code').value.trim();
     }

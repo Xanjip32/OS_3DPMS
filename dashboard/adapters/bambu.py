@@ -34,7 +34,7 @@ def _fan(v):
     return None if n is None else round(min(15.0, max(0.0, n)) / 15.0, 2)
 
 
-def enrich(base, r):
+def enrich(base, r, use_ams=True):
     """Add temperatures, fans, layers, AMS and HMS from a raw report to a legacy status."""
     st = dict(base)
     temps = {}
@@ -62,7 +62,7 @@ def enrich(base, r):
             attr, code = int(item.get("attr") or 0), int(item.get("code") or 0)
             errors.append("HMS %04X-%04X-%04X-%04X" % (attr >> 16, attr & 0xFFFF, code >> 16, code & 0xFFFF))
     ams = r.get("ams") if isinstance(r.get("ams"), dict) else None
-    if ams and isinstance(ams.get("ams"), list):
+    if use_ams and ams and isinstance(ams.get("ams"), list):   # AMS off in setup: ignore it, no warning
         units = []
         for unit in ams["ams"]:
             if not isinstance(unit, dict):
@@ -122,7 +122,7 @@ class BambuAdapter(PrinterAdapter):
             self.last_error = self.watcher.error or "no status report"
             return None
         raw, _ = self.watcher.raw_report()
-        return enrich(base, raw)
+        return enrich(base, raw, use_ams=bool(self.p.get("use_ams")))
 
     def upload_file(self, path, name, start=False):
         self.require("can_upload")

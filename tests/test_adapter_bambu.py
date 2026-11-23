@@ -84,6 +84,14 @@ class BambuAdapterTests(unittest.TestCase):
         self.assertEqual(st["errors"], ["HMS 0300-0200-0001-0001"])
         self.assertEqual(st["transport"], "mqtt")
 
+    def test_ams_off_hides_ams_and_its_no_filament_warning(self):
+        empty = dict(REPORT, ams={"tray_now": "255", "ams": [{"id": "0", "tray": [{"id": "0"}]}]})
+        on = self.adapter(empty, use_ams=True, mode="control").get_status()
+        self.assertIn("AMS reports no filament loaded", on["warnings"])
+        off = self.adapter(empty, use_ams=False, mode="control").get_status()   # no AMS connected
+        self.assertEqual(off["warnings"], [])
+        self.assertIsNone(off["ams"])
+
     def test_missing_fields(self):
         st = self.adapter({"gcode_state": "IDLE"}).get_status()
         self.assertEqual(st["state"], "standby")
