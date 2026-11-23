@@ -418,6 +418,25 @@ class UnitTests(unittest.TestCase):
         self.assertNotIn("hello", token)
         self.assertEqual(winsecret.unprotect(token), "hello")
 
+    def test_pre_adapters_bambu_keeps_uploads_after_upgrade(self):
+        # A Bambu entry saved before the adapters refactor has no "mode"; the upgrade must not silently
+        # turn off its uploads. It becomes control mode once, written back, and a fresh one stays read-only.
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "config.json")
+            config.save(path, {"printers": [{"id": "p1s", "type": "bambu", "host": "192.0.2.6",
+                                             "access_code": "12345678", "serial": "01P00A000000001"}]})
+            p = config.load(path)["printers"][0]
+            self.assertEqual(p["mode"], "control")
+            self.assertTrue(p["allow_file_upload"])
+            self.assertEqual(config.read_raw(path)["printers"][0]["mode"], "control")   # persisted once
+            # A printer added the new way (explicit mode) is left read-only.
+            fresh = config.validate({"printers": [{"id": "p2", "type": "bambu", "host": "192.0.2.7",
+                                                   "access_code": "12345678", "mode": "read_only"}]})["printers"][0]
+            self.assertFalse(fresh["allow_file_upload"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_old_cloudflare_settings_are_dropped(self):
         # 1.5.0 removed the Cloudflare dashboard: an older config.json still loads, and its key leaves the file.
         d = tempfile.mkdtemp()

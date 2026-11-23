@@ -364,10 +364,29 @@ def save(path, cfg):
         os.chmod(path, 0o600)
 
 
+def _migrate(raw):
+    """One-time upgrades of an on-disk config. Returns True if anything changed.
+
+    Before the adapters refactor a Bambu printer had no `mode` and could always upload and start
+    prints. Validation now defaults a mode-less Bambu to read-only, which would silently stop those
+    printers from uploading. Give such existing entries control mode once, so the upgrade keeps the
+    behaviour they had; newly added printers always carry an explicit mode and are left alone.
+    """
+    changed = False
+    for p in raw.get("printers") or []:
+        if isinstance(p, dict) and p.get("type") == "bambu" and "mode" not in p:
+            p["mode"] = "control"
+            p.setdefault("allow_file_upload", True)
+            p.setdefault("allow_remote_control", True)
+            changed = True
+    return changed
+
+
 def load(path):
     raw = read_raw(path)
+    migrated = _migrate(raw)
     cfg = validate(raw)
-    if protect_secrets(cfg) or "cloud" in raw:  # also drops the old Cloudflare key from the file
+    if protect_secrets(cfg) or migrated or "cloud" in raw:  # also drops the old Cloudflare key from the file
         save(path, cfg)
     return cfg
 

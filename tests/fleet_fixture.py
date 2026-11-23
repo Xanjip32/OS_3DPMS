@@ -38,7 +38,7 @@ class FleetFixture(unittest.TestCase):
             printers.append({"id": "off-%d" % i, "name": "Off %d" % i, "type": "klipper", "host": "127.0.0.1",
                              "http_port": blackhole_port(), "websocket": False})
         printers.append({"id": "p1s", "name": "P1S", "type": "bambu", "host": "127.0.0.1",
-                         "access_code": "12345678", "location": "Office"})
+                         "access_code": "12345678", "location": "Office", "mode": "read_only"})
         cfg = {"port": free_port(), "admin_port": free_port(), "max_upload_mb": 1, "allowed_users": [],
                "printers": printers}
         cfg.update(cls.extra_cfg)

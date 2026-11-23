@@ -4,10 +4,11 @@
 
 ### Universal printer adapters (branch `feature/universal-adapters`)
 
-- **Breaking for Bambu remote control:** Bambu printers are now **read-only by default**, also
-  printers saved by older versions (status, temperatures, AMS, HMS and camera work; no commands
-  are sent). To upload or start/pause/stop remotely set *Mode → Control* and tick the switches in
-  Devices (`"mode": "control"`, `"allow_file_upload"`, `"allow_remote_control"`)
+- **Bambu remote control is now opt-in:** newly added Bambu printers are **read-only by default**
+  (status, temperatures, AMS, HMS and camera work; no commands are sent). Set *Mode → Control* and
+  tick the switches in Devices to upload or start/pause/stop remotely. **A Bambu printer saved by
+  an older version keeps the uploads and control it already had** — the config is migrated once on
+  load instead of silently going read-only (regression fix)
 - New printer types: **OctoPrint** (Marlin), **PrusaLink** (experimental), **Marlin USB serial**
   (monitor only; optional `pyserial`). Every printer type goes through an adapter with capability
   detection (`dashboard/adapters/`, see `docs/ADAPTERS.md`)
