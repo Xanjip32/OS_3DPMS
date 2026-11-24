@@ -1,4 +1,4 @@
-# Notifications
+# <img src="../assets/openprintdeck-icon.svg" alt="OpenPrintDeck" width="36" height="36" align="absmiddle"> Notifications
 
 Events (choose them in Setup → Phone notifications):
 

@@ -2,7 +2,7 @@
 
 *Formerly **OS_3DPMS** (Open Source 3D Printer Monitoring System). Existing installs keep working: see the CHANGELOG.*
 
-<img src="assets/os3dpms-logo.png" alt="OpenPrintDeck logo with a red and gray 3D printer toolhead" width="320">
+<p align="center"><img src="assets/openprintdeck-logo.svg" alt="OpenPrintDeck logo: a print nozzle over a layered print on an open build plate" width="420"></p>
 
 View your printer cameras and print status in one dashboard. Click a camera to
 enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a

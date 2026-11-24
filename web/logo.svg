@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 72" width="330" height="72" role="img" aria-label="OpenPrintDeck">
+  <style>
+    .opd-word { font: 700 34px "Segoe UI", "Inter", "Helvetica Neue", Arial, "DejaVu Sans", sans-serif; letter-spacing: -0.5px; fill: #0f172a; }
+    .opd-accent { fill: #f97316; }
+    @media (prefers-color-scheme: dark) { .opd-word { fill: #f1f5f9; } .opd-accent { fill: #fb923c; } }
+  </style>
+  <g transform="translate(4 4)">
+  <defs>
+    <linearGradient id="opd-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e293b"/><stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="url(#opd-bg)" stroke="#334155"/>
+  <!-- hotend + nozzle -->
+  <rect x="22" y="7" width="20" height="11" rx="3" fill="#e2e8f0"/>
+  <rect x="26" y="10" width="12" height="2.5" rx="1.25" fill="#94a3b8"/>
+  <path d="M26.5 18h11l-4 6.5h-3z" fill="#cbd5e1"/>
+  <circle cx="32" cy="26.6" r="1.6" fill="#fb923c"/>
+  <!-- printed layers -->
+  <rect x="23" y="30" width="18" height="5" rx="2.5" fill="#fdba74"/>
+  <rect x="18" y="36.5" width="28" height="5" rx="2.5" fill="#fb923c"/>
+  <rect x="13" y="43" width="38" height="5" rx="2.5" fill="#f97316"/>
+  <!-- open deck / build plate -->
+  <rect x="7" y="50" width="50" height="5" rx="2.5" fill="#38bdf8"/>
+  <rect x="11" y="55" width="4" height="3.5" rx="1" fill="#38bdf8"/>
+  <rect x="49" y="55" width="4" height="3.5" rx="1" fill="#38bdf8"/>
+</g>
+  <text class="opd-word" x="80" y="48">Open<tspan class="opd-accent">Print</tspan>Deck</text>
+</svg>

@@ -1,4 +1,4 @@
-# MCP server (design only, not implemented)
+# <img src="../assets/openprintdeck-icon.svg" alt="OpenPrintDeck" width="36" height="36" align="absmiddle"> MCP server (design only, not implemented)
 
 A future [Model Context Protocol](https://modelcontextprotocol.io) server would let an AI
 assistant read the printer fleet and, under strict limits, act on it. Nothing in this document

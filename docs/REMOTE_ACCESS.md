@@ -1,4 +1,4 @@
-# Remote access
+# <img src="../assets/openprintdeck-icon.svg" alt="OpenPrintDeck" width="36" height="36" align="absmiddle"> Remote access
 
 OpenPrintDeck has **no custom VPN and opens no ports**. Every listener binds to `127.0.0.1`.
 [Tailscale](https://tailscale.com) is the supported way in from outside, and it is optional.

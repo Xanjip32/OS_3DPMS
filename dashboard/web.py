@@ -46,11 +46,13 @@ PUBLIC_FILES = {
     "/sw.js": ("sw.js", JS), "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
     "/icon-192.png": ("icon-192.png", "image/png"), "/icon-512.png": ("icon-512.png", "image/png"),
     "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/favicon.svg": ("favicon.svg", "image/svg+xml"), "/logo.svg": ("logo.svg", "image/svg+xml"),
 }
 ADMIN_FILES = {"/setup": ("setup.html", HTML), "/setup.js": ("setup.js", JS)}
 # Served before login in the password auth modes.
 LOGIN_FILES = {"/login": ("login.html", HTML), "/login.js": ("login.js", JS), "/app.css": ("app.css", CSS),
-               "/icon-192.png": ("icon-192.png", "image/png"), "/manifest.webmanifest":
+               "/icon-192.png": ("icon-192.png", "image/png"), "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+               "/logo.svg": ("logo.svg", "image/svg+xml"), "/manifest.webmanifest":
                ("manifest.webmanifest", "application/manifest+json")}
 CONTROL_ACTIONS = ("pause", "resume", "cancel", "start")
 UPLOAD_EXTENSIONS = (".gcode", ".gco", ".g", ".3mf")

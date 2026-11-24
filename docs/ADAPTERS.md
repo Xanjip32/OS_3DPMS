@@ -1,4 +1,4 @@
-# Printer adapters
+# <img src="../assets/openprintdeck-icon.svg" alt="OpenPrintDeck" width="36" height="36" align="absmiddle"> Printer adapters
 
 Every printer in `config.json` is handled by an **adapter** (`dashboard/adapters/`). The rest of
 OpenPrintDeck (monitor, dashboard, uploads, queue, notifications) only talks to the adapter interface,

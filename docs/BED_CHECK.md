@@ -1,4 +1,4 @@
-# Bed check and auto-start (Queue)
+# <img src="../assets/openprintdeck-icon.svg" alt="OpenPrintDeck" width="36" height="36" align="absmiddle"> Bed check and auto-start (Queue)
 
 OpenPrintDeck can start the next queued job on a printer **by itself** once the camera shows that the
 finished part has been taken off the bed. It is **off by default** for every printer. Without it,

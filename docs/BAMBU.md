@@ -1,4 +1,4 @@
-# Bambu Lab printers
+# <img src="../assets/openprintdeck-icon.svg" alt="OpenPrintDeck" width="36" height="36" align="absmiddle"> Bambu Lab printers
 
 OpenPrintDeck talks to Bambu printers **only on your local network** (MQTT over TLS on 8883, the JPEG
 camera on 6000, FTPS on 990), with the LAN access code. It never uses the Bambu cloud, never logs

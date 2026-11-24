@@ -1,4 +1,4 @@
-# Orca Slicer plugin (printer agent)
+# <img src="../assets/openprintdeck-icon.svg" alt="OpenPrintDeck" width="36" height="36" align="absmiddle"> Orca Slicer plugin (printer agent)
 
 OpenPrintDeck works on its own: the dashboard, the queue and remote access with Tailscale need no
 slicer plugin. The plugin is an **optional extra** for people who slice in Orca Slicer and want a
@@ -117,7 +117,9 @@ Security rules for tokens:
 [`.github/workflows/publish-orcacloud.yml`](../.github/workflows/publish-orcacloud.yml) uploads the
 plugin file with GitHub OIDC (no secrets). It is **off** until you:
 
-1. Create the plugin on <https://cloud.orcaslicer.com> (Plugins > Shared > Create), then Edit
+1. Create the plugin on <https://cloud.orcaslicer.com> (Plugins > Shared > Create). Upload
+   `orca_plugin/openprintdeck_printer_agent_any.py` and, as the listing icon,
+   [`orca_plugin/icon.png`](../orca_plugin/icon.png) (512×512 PNG, under the hub's 2 MB limit). Then Edit
    plugin > GitHub publishing > connect `Xanjip32/OpenPrintDeck`.
 2. Set the repository variable `ORCACLOUD_PUBLISH` = `true`.
 3. Bump `version` in the PEP 723 header **and** `PLUGIN_VERSION` in the plugin, then publish a

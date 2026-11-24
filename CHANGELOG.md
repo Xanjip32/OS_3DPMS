@@ -20,6 +20,16 @@
   folder `dashboard/` are unchanged. Stop the dashboard, `git pull` (or extract the new zip over
   the old folder), and start it again
 
+### OpenPrintDeck logo
+
+- New logo (nozzle over a layered print on an open build plate): `assets/openprintdeck-logo.svg`
+  (with wordmark, adapts to dark mode) and `assets/openprintdeck-icon.svg`. Shown in the README,
+  the docs, the dashboard/Setup header, the login page and as the browser favicon
+  (`/favicon.svg`, `/logo.svg`); the app icons (`icon-192.png`, `icon-512.png`,
+  `apple-touch-icon.png`) and the Orca Cloud listing icon `orca_plugin/icon.png` are rendered from
+  it with `scripts/make_icons.py` (now needs cairosvg + Pillow). The old `assets/os3dpms-logo.png`
+  is removed
+
 ### Bambu AMS toggle
 
 - Bambu **AMS** is a toggle in Devices > Edit ("AMS connected"). With it off, the AMS panel and
