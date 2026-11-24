@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 env:
-  PLUGIN_FILES: "orca_plugin/os3dpms_printer_agent_any.py"
+  PLUGIN_FILES: "orca_plugin/openprintdeck_printer_agent_any.py"
 
 jobs:
   publish:
@@ -32,8 +32,8 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#orca-plugin-v}"
-          header="$(sed -n 's/^# version = "\(.*\)"$/\1/p' orca_plugin/os3dpms_printer_agent_any.py)"
-          code="$(sed -n 's/^PLUGIN_VERSION = "\(.*\)"$/\1/p' orca_plugin/os3dpms_printer_agent_any.py)"
+          header="$(sed -n 's/^# version = "\(.*\)"$/\1/p' orca_plugin/openprintdeck_printer_agent_any.py)"
+          code="$(sed -n 's/^PLUGIN_VERSION = "\(.*\)"$/\1/p' orca_plugin/openprintdeck_printer_agent_any.py)"
           echo "tag=$tag header=$header code=$code"
           [ "$tag" = "$header" ] && [ "$tag" = "$code" ]
 

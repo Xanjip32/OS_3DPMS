@@ -1,4 +1,4 @@
-"""Install Tailscale on Windows from inside OS_3DPMS.
+"""Install Tailscale on Windows from inside OpenPrintDeck.
 
 Downloads the official MSI from pkgs.tailscale.com over HTTPS, checks that it is
 signed by Tailscale Inc. (Windows Authenticode), and runs it silently. Windows shows

@@ -21,7 +21,7 @@ from . import __version__, config
 
 log = logging.getLogger("dashboard.notify")
 
-USER_AGENT = "OS_3DPMS/%s (+https://github.com/Xanjip32/OS_3DPMS)" % __version__
+USER_AGENT = "OpenPrintDeck/%s (+https://github.com/Xanjip32/OpenPrintDeck)" % __version__
 MAX_PER_MINUTE = 20
 TELEGRAM_API = "https://api.telegram.org"
 
@@ -173,7 +173,7 @@ class Notifier:
         if not channels or not self._rate_ok():
             return {}
         image = self._snapshot(event) if n.get("snapshot") else None
-        title = "%s: %s" % (event["name"], kind) if kind != "test" else "OS_3DPMS"
+        title = "%s: %s" % (event["name"], kind) if kind != "test" else "OpenPrintDeck"
         click = self.app.monitor.public_url if self.app.monitor else ""
         results = {}
         for ch in channels:
@@ -186,7 +186,7 @@ class Notifier:
                 elif ch == "telegram":
                     send_telegram(config.secret(n, "telegram_token"), n["telegram_chat_id"], event["text"], image)
                 elif ch == "email":
-                    send_email(n, config.secret(n, "smtp_password"), "[OS_3DPMS] " + title, event["text"], image)
+                    send_email(n, config.secret(n, "smtp_password"), "[OpenPrintDeck] " + title, event["text"], image)
                 results[ch] = "ok"
             except Exception as e:
                 results[ch] = str(e)[:200]

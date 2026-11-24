@@ -1,4 +1,4 @@
-' Starts OS_3DPMS with no console window. Logs go to dashboard.log next to this file.
+' Starts OpenPrintDeck with no console window. Logs go to dashboard.log next to this file.
 Set fso = CreateObject("Scripting.FileSystemObject")
 dir = fso.GetParentFolderName(WScript.ScriptFullName)
 Set sh = CreateObject("WScript.Shell")

@@ -44,7 +44,7 @@ class JobHistory:
         os.replace(tmp, self.path)
 
     def started(self, printer, file, user, source="upload"):
-        """Record a print that was just started from OS_3DPMS. Returns its id."""
+        """Record a print that was just started from OpenPrintDeck. Returns its id."""
         with self.lock:
             for j in self.jobs:  # a new start on the same printer ends any job still marked running
                 if j["printer"] == printer and j["status"] == "printing":

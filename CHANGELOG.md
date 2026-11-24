@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Renamed to OpenPrintDeck (formerly OS_3DPMS)
+
+- The project is now **OpenPrintDeck**: README, docs, dashboard/Setup/login titles, server banner
+  and `--help`, notifications (`[OpenPrintDeck] ...` e-mail subjects, ntfy/Discord titles,
+  `User-Agent`), installer/start/stop scripts, release zip (`OpenPrintDeck-Windows-x64.zip`) and the
+  GitHub repository (`Xanjip32/OpenPrintDeck`; the old `OS_3DPMS` URLs redirect)
+- Orca plugin (not yet published): file `orca_plugin/openprintdeck_printer_agent_any.py`, plugin
+  name *OpenPrintDeck printer agent*, agent IDs `openprintdeck_queue` / `openprintdeck_direct`,
+  device IDs `openprintdeck:<printer-id>`. Orca printer presets that picked the old
+  `os3dpms_*` agents must pick the new agent once
+- **Compatibility, nothing to do for a running install:** `config.json`, `queue.json`,
+  `history.json` and every config key are unchanged; API paths are unchanged; the login cookie
+  stays `os3dpms_session` (nobody is signed out); browser preferences stay under the
+  `os3dpms.*` localStorage keys; the login auto-start file stays `os3dpms.vbs`, so re-running
+  `install.bat` does not add a second auto-start; DPAPI-encrypted secrets and the Python package
+  folder `dashboard/` are unchanged. Stop the dashboard, `git pull` (or extract the new zip over
+  the old folder), and start it again
+
+### Bambu AMS toggle
+
 - Bambu **AMS** is a toggle in Devices > Edit ("AMS connected"). With it off, the AMS panel and
   the "AMS reports no filament loaded" warning/alerts are hidden, so a printer used without an AMS
   no longer spams that warning
@@ -28,7 +48,7 @@
 
 ### Orca Slicer plugin and API tokens (branch `feature/bed-check-orca-plugin`)
 
-- **Orca Slicer printer agent** `orca_plugin/os3dpms_printer_agent_any.py` (beta, single PEP 723
+- **Orca Slicer printer agent** `orca_plugin/openprintdeck_printer_agent_any.py` (beta, single PEP 723
   file, standard library only): agents **OS_3DPMS (queue)** and **OS_3DPMS (print now)**, printer
   list and Bambu-style status in Orca's Device tab, pause / resume / cancel. Needs an Orca Slicer
   Nightly with plugin support and *Use printer agents instead of print hosts*. Tested against a

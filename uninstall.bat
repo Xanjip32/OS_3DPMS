@@ -1,5 +1,5 @@
 @echo off
-rem Remove OS_3DPMS auto-start and stop publishing it on Tailscale.
+rem Remove OpenPrintDeck auto-start and stop publishing it on Tailscale.
 cd /d "%~dp0"
 call "%~dp0stop.bat" quiet
 del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\os3dpms.vbs" >nul 2>nul
@@ -9,6 +9,6 @@ echo.
 echo Removing Tailscale publishing (tailscale serve reset)...
 "%TS%" serve reset
 echo.
-echo OS_3DPMS is stopped and will not start at login.
+echo OpenPrintDeck is stopped and will not start at login.
 echo You can now delete this folder. Tailscale itself stays installed.
 pause

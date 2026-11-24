@@ -1,13 +1,15 @@
-# OS_3DPMS — Open Source 3D Printer Monitoring System
+# OpenPrintDeck — open-source 3D printer monitoring and print-farm dashboard
 
-<img src="assets/os3dpms-logo.png" alt="OS_3DPMS logo with a red and gray 3D printer toolhead" width="320">
+*Formerly **OS_3DPMS** (Open Source 3D Printer Monitoring System). Existing installs keep working: see the CHANGELOG.*
+
+<img src="assets/os3dpms-logo.png" alt="OpenPrintDeck logo with a red and gray 3D printer toolhead" width="320">
 
 View your printer cameras and print status in one dashboard. Click a camera to
 enlarge it, or use the **Mainsail** button for Klipper printer controls. Drag a
 `.gcode` file onto a printer to send it and optionally start the print.
 
 **Download:** the Windows package (Python included) is on the
-[Releases page](https://github.com/Xanjip32/OS_3DPMS/releases). Install it on the printer-room PC,
+[Releases page](https://github.com/Xanjip32/OpenPrintDeck/releases). Install it on the printer-room PC,
 add your printers, and the dashboard works on that PC right away, without any account.
 
 **Remote access:** Tailscale gives you the whole dashboard from your phone or laptop anywhere,
@@ -43,7 +45,7 @@ printer supports and what you allowed. See [docs/ADAPTERS.md](docs/ADAPTERS.md).
   clear, start**. Nothing starts by itself unless you turn on auto-start for that printer. The
   queue is kept in `queue.json` next to `config.json`
 - Optional **bed check and auto-start** per printer (off by default): save a picture of the empty
-  bed; after a print, OS_3DPMS compares the camera with it and starts the next queued job by itself
+  bed; after a print, OpenPrintDeck compares the camera with it and starts the next queued job by itself
   once the part is removed. No AI, no extra packages (Pillow optional). Limits and settings:
   [docs/BED_CHECK.md](docs/BED_CHECK.md)
 - Devices page: **+ Add printer**, and **Edit** / **Remove** on each printer, on the PC and over
@@ -69,11 +71,11 @@ printer supports and what you allowed. See [docs/ADAPTERS.md](docs/ADAPTERS.md).
 
 ## Quick start (Windows)
 
-1. Download `OS_3DPMS-Windows-x64.zip` from the
-   [Releases page](https://github.com/Xanjip32/OS_3DPMS/releases) and extract it on a PC that can
-   reach the printers. Keep the extracted folder in a permanent location, for example `C:\OS_3DPMS`.
+1. Download `OpenPrintDeck-Windows-x64.zip` from the
+   [Releases page](https://github.com/Xanjip32/OpenPrintDeck/releases) and extract it on a PC that can
+   reach the printers. Keep the extracted folder in a permanent location, for example `C:\OpenPrintDeck`.
 2. Double-click **`install.bat`**. The Windows package includes Python. The source download
-   can use an existing Python or install it with `winget`. The installer sets OS_3DPMS to start
+   can use an existing Python or install it with `winget`. The installer sets OpenPrintDeck to start
    at login and opens [Setup](http://127.0.0.1:8079/setup).
 3. Click **Find printers on my network** and **Add all**, or choose **Add Klipper** / **Add Bambu**
    and enter the printer IP. Then click **Save printers**.
@@ -122,7 +124,7 @@ connect. On iPhone, turn on **VPN On Demand** in the Tailscale app so it stays c
 ### Linux / macOS
 
 ```bash
-git clone https://github.com/Xanjip32/OS_3DPMS.git && cd OS_3DPMS
+git clone https://github.com/Xanjip32/OpenPrintDeck.git && cd OpenPrintDeck
 python3 run.py --open-setup
 ```
 
@@ -138,18 +140,18 @@ in setup to use a different HTTP MJPEG or JPEG snapshot URL. If uploads fail wit
 
 Out of the box, Moonraker lets any device on your network control the printer without a login.
 Run `python tools\secure_printers.py` on the printer PC (printers idle) to require a Mainsail
-login everywhere: it saves each printer's API key in OS_3DPMS, creates your login, and trusts
+login everywhere: it saves each printer's API key in OpenPrintDeck, creates your login, and trusts
 only the printer itself (KlipperScreen keeps working). `--undo` puts the old settings back.
 
 **Bambu Lab.** You need the LAN access code (printer screen: Settings → WLAN / Network). The
 code changes when LAN mode is switched off and on, so read it again if the camera stops
 working. Uploads go to the SD card, so a card must be inserted. The serial number turns on
-live status, notifications and remote start: **Find printers** fills it in, and OS_3DPMS also
+live status, notifications and remote start: **Find printers** fills it in, and OpenPrintDeck also
 picks it up from the printer's network announcement when it is left empty. Send `.gcode.3mf`
 files exported from Bambu Studio or OrcaSlicer to start prints remotely.
 **Check connection** in setup logs in with the access code and says if the printer refuses it.
 P1 and A1 printers allow one camera viewer at a time: close Bambu Studio's or Handy's camera
-view, or other viewers, while OS_3DPMS shows the camera. Newer firmware may require *LAN Only Mode* / *Developer Mode* for third-party
+view, or other viewers, while OpenPrintDeck shows the camera. Newer firmware may require *LAN Only Mode* / *Developer Mode* for third-party
 tools, and future firmware updates may change this.
 The built-in camera reader uses the Bambu JPEG feed on port 6000 (P1P, P1S, A1, A1 mini). X1, H2D
 and P2S cameras use RTSP on port 322: setup says so, and you can set **Camera URL override** to an
@@ -204,8 +206,8 @@ Setup page on the PC itself never asks for a password. Details: [docs/REMOTE_ACC
 
 ## Orca Slicer plugin (optional, beta)
 
-[`orca_plugin/os3dpms_printer_agent_any.py`](orca_plugin/os3dpms_printer_agent_any.py) is an Orca
-Slicer printer agent: Orca's *Print* button can put the file in the OS_3DPMS queue or print it now,
+[`orca_plugin/openprintdeck_printer_agent_any.py`](orca_plugin/openprintdeck_printer_agent_any.py) is an Orca
+Slicer printer agent: Orca's *Print* button can put the file in the OpenPrintDeck queue or print it now,
 and the Device tab shows the printer status. It needs an Orca Slicer **Nightly** build with plugin
 support (not the stable 2.5.2), *Preferences > Developer > Use printer agents instead of print
 hosts*, and an API token from the Setup page. Install it by side-loading the file or from the Orca

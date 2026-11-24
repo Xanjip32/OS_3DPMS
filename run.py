@@ -1,4 +1,4 @@
-"""Start OS_3DPMS. Usage: py run.py [--open-setup]"""
+"""Start OpenPrintDeck. Usage: py run.py [--open-setup]"""
 import os
 import sys
 

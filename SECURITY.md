@@ -3,15 +3,15 @@
 ## Reporting a vulnerability
 
 Please do **not** open a public issue. Use GitHub's
-[private vulnerability reporting](https://github.com/Xanjip32/OS_3DPMS/security/advisories/new)
+[private vulnerability reporting](https://github.com/Xanjip32/OpenPrintDeck/security/advisories/new)
 with steps to reproduce. You should get an answer within a week.
 
 ## Threat model
 
-OS_3DPMS can move printer motors and heaters (by starting prints) and shows camera
+OpenPrintDeck can move printer motors and heaters (by starting prints) and shows camera
 images of a room. Treat access to it like physical access to the printers.
 
-**Trusted:** the PC running OS_3DPMS and its logged-in Windows user; your Tailscale
+**Trusted:** the PC running OpenPrintDeck and its logged-in Windows user; your Tailscale
 account and the devices signed in to it (narrowed by `allowed_users` and Tailscale ACLs).
 
 **Not trusted:** everything else on the local network, the internet, websites open in
@@ -59,7 +59,7 @@ a user's browser, and the printers' network traffic.
   through Tailscale may also open Mainsail. Restrict users with Tailscale ACLs if needed.
 - By default Moonraker trusts every private network address, so anyone on the LAN (and anyone
   who may open Mainsail through the dashboard) controls the printer. `tools/secure_printers.py`
-  trusts only the printer itself and requires a Mainsail login; OS_3DPMS then uses the API key.
+  trusts only the printer itself and requires a Mainsail login; OpenPrintDeck then uses the API key.
 - G-code files are not inspected. A user who may upload can send a file containing any G-code.
 - Password sessions are lost on restart (by design) and are not bound to an IP address.
 - PrusaLink Digest authentication uses MD5 (the printer's protocol); keep it on a trusted LAN.
@@ -74,4 +74,4 @@ a user's browser, and the printers' network traffic.
 - Keep Tailscale, Python and printer firmware up to date.
 - Use `allowed_users` or Tailscale ACLs when your tailnet is shared with other people.
 - Rotate the Bambu access code (toggle LAN mode) if it was ever shared.
-- Never expose OS_3DPMS with Tailscale Funnel or port forwarding.
+- Never expose OpenPrintDeck with Tailscale Funnel or port forwarding.

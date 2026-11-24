@@ -7,7 +7,7 @@ Tailscale identity stays the default way in (auth mode "tailscale"). Modes:
 * "tailscale+password"  - both: a Tailscale account that is allowed AND a dashboard login
 
 Passwords are stored only as PBKDF2-SHA256 hashes (standard library). Sessions live in
-memory: restarting OS_3DPMS signs everyone out, which is acceptable for a single PC.
+memory: restarting OpenPrintDeck signs everyone out, which is acceptable for a single PC.
 """
 import hashlib
 import hmac

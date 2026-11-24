@@ -1,11 +1,11 @@
-# OS_3DPMS technical assessment (audit before the universal-adapter work)
+# OpenPrintDeck technical assessment (audit before the universal-adapter work)
 
 Audited commit: `21ad801` ("Confirm Bambu print start and show why the printer refuses it"),
 version `1.5.0-preview.2`. Branch for the follow-up work: `feature/universal-adapters`.
 
 ## 1. Existing architecture
 
-OS_3DPMS is a single Python process using **only the standard library** (no pip packages).
+OpenPrintDeck is a single Python process using **only the standard library** (no pip packages).
 
 | Module | Role |
 |---|---|

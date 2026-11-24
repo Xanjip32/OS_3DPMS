@@ -540,7 +540,7 @@ async function saveDevices(list) {
 }
 
 async function removePrinter(p) {
-  if (!confirm(`Remove ${p.name} from OS_3DPMS?\n\nThe printer itself is not changed. You can add it again.`)) return;
+  if (!confirm(`Remove ${p.name} from OpenPrintDeck?\n\nThe printer itself is not changed. You can add it again.`)) return;
   try {
     await saveDevices((await devicesList()).filter(x => x.id !== p.id));
     toast(`Removed ${p.name}`);

@@ -14,14 +14,14 @@ Events (choose them in Setup → Phone notifications):
 | `warning` | the printer reports a new warning or error code while not in an error state (Bambu HMS codes, filament / AMS warnings); each one once | on |
 
 Temperature runaway is detected and handled by the printer firmware (Klipper `verify_heater`,
-Marlin thermal protection, Bambu HMS); OS_3DPMS shows the resulting shutdown / error and notifies.
+Marlin thermal protection, Bambu HMS); OpenPrintDeck shows the resulting shutdown / error and notifies.
 
 Channels: dashboard pop-ups, **ntfy**, **Discord**, **Telegram** (Setup page) and **e-mail**
 (config file only). At most 20 messages a minute.
 
 ## E-mail (SMTP)
 
-Add to `"notifications"` in `config.json` and restart OS_3DPMS (Setup keeps these values when you
+Add to `"notifications"` in `config.json` and restart OpenPrintDeck (Setup keeps these values when you
 save other notification settings):
 
 ```json

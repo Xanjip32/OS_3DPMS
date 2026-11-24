@@ -12,7 +12,7 @@ is implemented yet; it records the design so it can be built safely later.
 2. **Same rules as a person.** The MCP server is a client of the existing HTTP API with its own
    dashboard account (`--add-user mcp --role viewer` or `operator`), so roles, CSRF, rate limits,
    confirmations and `audit.log` apply unchanged. It never talks to printers directly.
-3. **Local only.** stdio transport on the OS_3DPMS PC (or over Tailscale to the same API); no
+3. **Local only.** stdio transport on the OpenPrintDeck PC (or over Tailscale to the same API); no
    public listener.
 4. **No raw G-code, no settings.** There is no tool for arbitrary G-code, temperature changes,
    firmware, network or Bambu settings, and none will be added.

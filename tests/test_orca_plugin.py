@@ -1,7 +1,7 @@
-"""The Orca Slicer printer agent (orca_plugin/) against a running OS_3DPMS, with a stand-in `orca` module.
+"""The Orca Slicer printer agent (orca_plugin/) against a running OpenPrintDeck, with a stand-in `orca` module.
 
 Orca Slicer's real embedded `orca` module is not available here, so these tests check the agent's
-logic and its use of the OS_3DPMS API, not its behavior inside Orca Slicer itself.
+logic and its use of the OpenPrintDeck API, not its behavior inside Orca Slicer itself.
 """
 import importlib.util
 import json
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tests.test_dashboard import ServerFixture  # noqa: E402
 
 PLUGIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "orca_plugin",
-                      "os3dpms_printer_agent_any.py")
+                      "openprintdeck_printer_agent_any.py")
 
 
 def fake_orca():
@@ -59,7 +59,7 @@ def load_plugin():
     orca = fake_orca()
     sys.modules["orca"] = orca
     try:
-        spec = importlib.util.spec_from_file_location("os3dpms_orca_plugin", PLUGIN)
+        spec = importlib.util.spec_from_file_location("openprintdeck_orca_plugin", PLUGIN)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
     finally:
@@ -78,7 +78,7 @@ class PluginFileTests(unittest.TestCase):
         self.assertEqual(len(orca.packages), 1)
         orca.packages[0]().register_capabilities()
         ids = [cls().get_agent_info().id for cls in orca.registered]
-        self.assertEqual(ids, ["os3dpms_queue", "os3dpms_direct"])
+        self.assertEqual(ids, ["openprintdeck_queue", "openprintdeck_direct"])
         names = [cls().get_name() for cls in orca.registered]
         self.assertEqual(len(set(names)), 2)
         self.assertFalse(any(";" in n for n in names))       # ';' is reserved by Orca
@@ -117,7 +117,7 @@ class PluginAgainstDashboardTests(ServerFixture):
         values.update(kw)
         return self.orca.printer_agent.Record(**values)
 
-    def agent(self, cls_name="OS3DPMSQueueAgent"):
+    def agent(self, cls_name="OpenPrintDeckQueueAgent"):
         agent = getattr(self.mod, cls_name)()
         self.events = {"ssdp": [], "connect": [], "message": []}
         agent.set_on_ssdp_msg_fn(lambda m: self.events["ssdp"].append(json.loads(m)))
@@ -140,14 +140,14 @@ class PluginAgainstDashboardTests(ServerFixture):
         self.app.token_failures.hits.clear()
         self.assertEqual(agent.connect_printer(self.params()), 0)
         self.assertEqual(self.events["connect"][-1][0], 0)
-        self.assertEqual({d["dev_id"] for d in self.events["ssdp"]}, {"os3dpms:voron", "os3dpms:p1s"})
+        self.assertEqual({d["dev_id"] for d in self.events["ssdp"]}, {"openprintdeck:voron", "openprintdeck:p1s"})
         self.assertTrue(agent.start_discovery(True, False))
 
-    def test_queue_agent_adds_the_job_to_the_os3dpms_queue(self):
+    def test_queue_agent_adds_the_job_to_the_openprintdeck_queue(self):
         agent = self.agent()
         self.assertEqual(agent.connect_printer(self.params()), 0)
         updates = []
-        params = self.orca.printer_agent.Record(dev_id="os3dpms:voron", filename=self.gcode(), task_name="Cube",
+        params = self.orca.printer_agent.Record(dev_id="openprintdeck:voron", filename=self.gcode(), task_name="Cube",
                                                 project_name="Cube", dev_ip="", password=self.token)
         self.assertEqual(agent.start_local_print(params, lambda *a: updates.append(a), lambda: False), 0)
         self.addCleanup(os.remove, os.path.join(self.app.files_dir, "Cube.gcode"))
@@ -159,7 +159,7 @@ class PluginAgainstDashboardTests(ServerFixture):
             self.app.save_queue()
 
     def test_direct_agent_prints_now_and_pinned_host_picks_the_printer(self):
-        agent = self.agent("OS3DPMSDirectAgent")
+        agent = self.agent("OpenPrintDeckDirectAgent")
         self.assertEqual(agent.connect_printer(self.params(host="127.0.0.1:%d/voron" % self.app.cfg["port"])), 0)
         params = self.orca.printer_agent.Record(dev_id="", filename=self.gcode(), task_name="Now.gcode",
                                                 project_name="", dev_ip="", password=self.token)
@@ -174,8 +174,8 @@ class PluginAgainstDashboardTests(ServerFixture):
         params = self.orca.printer_agent.Record(dev_id="", filename=self.gcode(), task_name="x",
                                                 project_name="", dev_ip="", password=self.token)
         self.assertEqual(agent.start_local_print(params, lambda *a: updates.append(a), None), -1)
-        self.assertIn("choose an OS_3DPMS printer", updates[-1][2])       # two printers, none chosen
-        params.dev_id = "os3dpms:voron"
+        self.assertIn("choose an OpenPrintDeck printer", updates[-1][2])       # two printers, none chosen
+        params.dev_id = "openprintdeck:voron"
         params.filename = "/no/such/file.gcode"
         self.assertEqual(agent.start_local_print(params, lambda *a: updates.append(a), None), -1)
         cancelled = threading.Event()
@@ -205,11 +205,11 @@ class PluginAgainstDashboardTests(ServerFixture):
                 break
             threading.Event().wait(0.1)
         dev, payload = self.events["message"][0]
-        self.assertTrue(dev.startswith("os3dpms:"))
+        self.assertTrue(dev.startswith("openprintdeck:"))
         self.assertIn("gcode_state", json.loads(payload)["print"])
-        self.assertEqual(agent.send_message_to_printer("os3dpms:voron", '{"print": {"command": "gcode_line"}}', 0, 0),
+        self.assertEqual(agent.send_message_to_printer("openprintdeck:voron", '{"print": {"command": "gcode_line"}}', 0, 0),
                          -7010)
-        self.assertEqual(agent.send_message_to_printer("os3dpms:voron", "not json", 0, 0), -1)
+        self.assertEqual(agent.send_message_to_printer("openprintdeck:voron", "not json", 0, 0), -1)
         self.assertEqual(agent.request_bind_ticket(), (0, ""))
 
 

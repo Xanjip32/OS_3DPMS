@@ -1,10 +1,10 @@
 @echo off
-rem OS_3DPMS installer for Windows. Double-click it on the PC that can reach the printers.
+rem OpenPrintDeck installer for Windows. Double-click it on the PC that can reach the printers.
 setlocal
 cd /d "%~dp0"
-title OS_3DPMS installer
+title OpenPrintDeck installer
 echo.
-echo  OS_3DPMS installer
+echo  OpenPrintDeck installer
 echo  ==================
 echo.
 
@@ -31,7 +31,7 @@ call "%~dp0stop.bat" quiet
 set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 
 rem ---- 3. Auto-start at login and start now -----------------------------------
-echo [3/3] Setting up auto-start and starting OS_3DPMS...
+echo [3/3] Setting up auto-start and starting OpenPrintDeck...
 if not exist "%STARTUP%" mkdir "%STARTUP%"
 > "%STARTUP%\os3dpms.vbs" echo CreateObject("WScript.Shell").Run "wscript.exe ""%~dp0run-hidden.vbs""", 0
 wscript.exe "%~dp0run-hidden.vbs" --open-setup

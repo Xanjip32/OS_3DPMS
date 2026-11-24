@@ -568,7 +568,7 @@ saveBtn.addEventListener('click', async () => {
   } catch (e) {
     msg.className = 'msg bad';
     msg.textContent = e instanceof TypeError
-      ? 'Not saved: this page cannot reach OS_3DPMS. Start it with start.bat, then reload this page.'
+      ? 'Not saved: this page cannot reach OpenPrintDeck. Start it with start.bat, then reload this page.'
       : `Not saved: ${e.message}`;
     msg.scrollIntoView({ block: 'center', behavior: 'smooth' });
   } finally {

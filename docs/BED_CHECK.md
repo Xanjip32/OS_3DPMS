@@ -1,6 +1,6 @@
 # Bed check and auto-start (Queue)
 
-OS_3DPMS can start the next queued job on a printer **by itself** once the camera shows that the
+OpenPrintDeck can start the next queued job on a printer **by itself** once the camera shows that the
 finished part has been taken off the bed. It is **off by default** for every printer. Without it,
 the Queue works as before: a person presses **Bed is clear, start**.
 
@@ -8,7 +8,7 @@ No AI and no cloud service: the check compares the camera picture with a picture
 
 ## How to turn it on
 
-1. Make sure the printer's camera works in OS_3DPMS and shows the bed.
+1. Make sure the printer's camera works in OpenPrintDeck and shows the bed.
 2. Empty the bed, park the toolhead where it stops after a print, and switch the light on as usual.
 3. **Queue → Bed check and auto-start → Save empty-bed picture** for that printer.
 4. Put a part (or any object) on the bed and press **Test now**: it must say *NOT clear*. Remove it
@@ -53,7 +53,7 @@ problem) counts as **not clear**.
 ## How the comparison works
 
 1. Both pictures are reduced to a small picture: one value per 8×8 pixels, for brightness and the
-   two color channels. Without extra packages, OS_3DPMS reads the block averages directly from
+   two color channels. Without extra packages, OpenPrintDeck reads the block averages directly from
    the JPEG (baseline JPEG, which webcams, crowsnest/mjpg-streamer and Bambu cameras send). If
    [Pillow](https://pypi.org/project/pillow/) is installed (`py -m pip install pillow`) it is used
    instead; it is faster and also reads progressive JPEGs. Pillow is optional.

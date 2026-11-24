@@ -3,35 +3,35 @@
 # dependencies = []
 #
 # [tool.orcaslicer.plugin]
-# name = "OS_3DPMS printer agent"
-# description = "Send jobs from Orca Slicer to an OS_3DPMS print farm dashboard: queue them (with the optional bed check and auto-start) or print now, and see live printer status. Needs Orca Slicer with plugin support (nightly) and Preferences > Developer > Use printer agents instead of print hosts."
-# author = "OS_3DPMS contributors"
+# name = "OpenPrintDeck printer agent"
+# description = "Send jobs from Orca Slicer to an OpenPrintDeck print farm dashboard: queue them (with the optional bed check and auto-start) or print now, and see live printer status. Needs Orca Slicer with plugin support (nightly) and Preferences > Developer > Use printer agents instead of print hosts."
+# author = "OpenPrintDeck contributors"
 # version = "0.1.0"
 # ///
-"""OS_3DPMS printer agent for Orca Slicer (beta, untested against a real Orca Slicer build).
+"""OpenPrintDeck printer agent for Orca Slicer (beta, untested against a real Orca Slicer build).
 
 Orca Slicer talks to printers through "printer agents". This plugin adds two agents that talk
-to an OS_3DPMS dashboard over its HTTP API instead of to a printer:
+to an OpenPrintDeck dashboard over its HTTP API instead of to a printer:
 
-* "OS_3DPMS (queue)"     agent id ``os3dpms_queue``: Print adds the file to the OS_3DPMS queue
+* "OpenPrintDeck (queue)"     agent id ``openprintdeck_queue``: Print adds the file to the OpenPrintDeck queue
                           of the chosen printer. It starts with the Queue page button, or by
                           itself when that printer has the bed check with auto-start turned on.
-* "OS_3DPMS (print now)" agent id ``os3dpms_direct``: Print uploads the file and starts it now
-                          (OS_3DPMS refuses when the printer is busy).
+* "OpenPrintDeck (print now)" agent id ``openprintdeck_direct``: Print uploads the file and starts it now
+                          (OpenPrintDeck refuses when the printer is busy).
 
 Send (upload without printing) uploads the file to the printer with both agents.
 
-Set up the printer preset in Orca Slicer (see docs/ORCA_PLUGIN.md in the OS_3DPMS repository):
+Set up the printer preset in Orca Slicer (see docs/ORCA_PLUGIN.md in the OpenPrintDeck repository):
 
 * Printer settings > Basic information > Advanced > Printer Agent: one of the agents above.
-* Print host: the OS_3DPMS address, for example ``http://127.0.0.1:8079`` on the printer PC itself,
+* Print host: the OpenPrintDeck address, for example ``http://127.0.0.1:8079`` on the printer PC itself,
   or ``https://<printer-pc>.<tailnet>.ts.net`` from another computer on your Tailscale network.
-  Add ``/<printer-id>`` to pin one OS_3DPMS printer, e.g. ``http://127.0.0.1:8079/voron``.
-* API key (printhost_apikey): an OS_3DPMS API token (Setup page > Orca Slicer plugin, or
+  Add ``/<printer-id>`` to pin one OpenPrintDeck printer, e.g. ``http://127.0.0.1:8079/voron``.
+* API key (printhost_apikey): an OpenPrintDeck API token (Setup page > Orca Slicer plugin, or
   ``py run.py --add-token orca``).
 
 Only the Python standard library is used. Network access goes through Orca's plugin audit, so
-Orca asks once before the first connection to the OS_3DPMS address.
+Orca asks once before the first connection to the OpenPrintDeck address.
 """
 import http.client
 import json
@@ -50,7 +50,7 @@ POLL_S = 3.0                    # status refresh while connected
 TIMEOUT_S = 15
 CHUNK = 256 * 1024
 DEFAULT_ACCESS_CODE = "88888888"  # what Orca passes when the preset has no API key
-DEVICE_PREFIX = "os3dpms:"
+DEVICE_PREFIX = "openprintdeck:"
 
 OK = 0
 FAILED = -1
@@ -61,7 +61,7 @@ STAGE_UPLOAD = 1
 STAGE_FINISHED = 6
 STAGE_ERROR = 7
 
-# OS_3DPMS state -> Bambu-style gcode_state that Orca's device view understands.
+# OpenPrintDeck state -> Bambu-style gcode_state that Orca's device view understands.
 GCODE_STATE = {"standby": "IDLE", "printing": "RUNNING", "paused": "PAUSE", "complete": "FINISH",
                "cancelled": "IDLE", "error": "FAILED", "offline": "IDLE"}
 
@@ -70,7 +70,7 @@ class AgentError(Exception):
     """A problem to report to the user (Orca shows the message), never raised to Orca itself."""
 
 
-# ---------------------------------------------------------------- OS_3DPMS HTTP API
+# ---------------------------------------------------------------- OpenPrintDeck HTTP API
 
 def parse_print_host(host, port="", use_ssl=False):
     """(base URL, pinned printer id) from the preset's print host.
@@ -86,11 +86,11 @@ def parse_print_host(host, port="", use_ssl=False):
     host, _, path = host.partition("/")
     pinned = path.strip("/").split("/")[0] if path.strip("/") else ""
     if not host:
-        raise AgentError("set the OS_3DPMS address as the printer's print host")
+        raise AgentError("set the OpenPrintDeck address as the printer's print host")
     if port and ":" not in host:
         host = "%s:%s" % (host, port)
     if not use_ssl and host.lower().split(":")[0].endswith(".ts.net"):
-        use_ssl = True  # tailscale serve publishes OS_3DPMS over HTTPS only
+        use_ssl = True  # tailscale serve publishes OpenPrintDeck over HTTPS only
     return ("https" if use_ssl else "http") + "://" + host, urllib.parse.unquote(pinned)
 
 
@@ -101,7 +101,7 @@ def safe_name(name):
 
 
 class Client:
-    """Small OS_3DPMS API client (standard library only)."""
+    """Small OpenPrintDeck API client (standard library only)."""
 
     def __init__(self, base, token, ca_file="", timeout=TIMEOUT_S):
         self.base = base.rstrip("/")
@@ -120,7 +120,7 @@ class Client:
         return http.client.HTTPConnection(self.netloc, timeout=timeout)
 
     def _headers(self, extra=None):
-        h = {"X-Dashboard": "1", "User-Agent": "OS_3DPMS-Orca-agent/%s" % PLUGIN_VERSION,
+        h = {"X-Dashboard": "1", "User-Agent": "OpenPrintDeck-Orca-agent/%s" % PLUGIN_VERSION,
              "Accept": "application/json"}
         if self.token:
             h["Authorization"] = "Bearer " + self.token
@@ -137,8 +137,8 @@ class Client:
         if resp.status >= 400:
             msg = data.get("error") if isinstance(data, dict) else ""
             if resp.status == 401:
-                msg = msg or "OS_3DPMS refused the API token"
-            raise AgentError("OS_3DPMS answered %d: %s" % (resp.status, msg or resp.reason))
+                msg = msg or "OpenPrintDeck refused the API token"
+            raise AgentError("OpenPrintDeck answered %d: %s" % (resp.status, msg or resp.reason))
         return data
 
     def request(self, method, path, body=None, timeout=None):
@@ -149,7 +149,7 @@ class Client:
             conn.request(method, path, body=data, headers=headers)
             return self._answer(conn.getresponse())
         except (OSError, http.client.HTTPException) as e:
-            raise AgentError("cannot reach OS_3DPMS at %s: %s" % (self.base, e)) from None
+            raise AgentError("cannot reach OpenPrintDeck at %s: %s" % (self.base, e)) from None
         finally:
             conn.close()
 
@@ -164,7 +164,7 @@ class Client:
         return self.request("POST", "/api/printers/%s/%s" % (urllib.parse.quote(printer), action), body)
 
     def upload(self, printer, path, name, action, progress=None, cancelled=None):
-        """Send a file: action queue (add to the OS_3DPMS queue), send (upload) or print (start now)."""
+        """Send a file: action queue (add to the OpenPrintDeck queue), send (upload) or print (start now)."""
         size = os.path.getsize(path)
         query = urllib.parse.urlencode({"printer": printer, "name": name, "action": action, "overwrite": "1"})
         conn = self._conn(max(self.timeout, 120))
@@ -188,13 +188,13 @@ class Client:
                         progress(int(sent * 100 / max(1, size)))
             return self._answer(conn.getresponse())
         except (OSError, http.client.HTTPException) as e:
-            raise AgentError("upload to OS_3DPMS failed: %s" % e) from None
+            raise AgentError("upload to OpenPrintDeck failed: %s" % e) from None
         finally:
             conn.close()
 
 
 def bambu_status(printer):
-    """OS_3DPMS printer entry -> Bambu-style push_status JSON (Orca's device view reads this format)."""
+    """OpenPrintDeck printer entry -> Bambu-style push_status JSON (Orca's device view reads this format)."""
     st = printer.get("status") or {}
     temps = st.get("temperatures") or {}
     nozzle, bed = temps.get("nozzle") or {}, temps.get("bed") or {}
@@ -220,7 +220,7 @@ def bambu_status(printer):
 
 # ---------------------------------------------------------------- the agents
 
-class OS3DPMSAgentBase(pa.PrinterAgentBase):
+class OpenPrintDeckAgentBase(pa.PrinterAgentBase):
     """Shared behavior. Subclasses set AGENT_ID, AGENT_NAME and PRINT_ACTION."""
 
     AGENT_ID = ""
@@ -233,7 +233,7 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
         self.selected = ""
         self.client = None
         self.pinned = ""
-        self.devices = {}          # printer id -> last OS_3DPMS printer entry
+        self.devices = {}          # printer id -> last OpenPrintDeck printer entry
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.thread = None
@@ -245,7 +245,7 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
 
     def get_agent_info(self):
         return pa.AgentInfo(self.AGENT_ID, self.AGENT_NAME, PLUGIN_VERSION,
-                            "Send jobs to an OS_3DPMS dashboard (%s)" % self.PRINT_ACTION)
+                            "Send jobs to an OpenPrintDeck dashboard (%s)" % self.PRINT_ACTION)
 
     # ------------------------------------------------------------ host callbacks (any may be None)
 
@@ -281,10 +281,10 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
         host = urllib.parse.urlsplit(self.client.base).netloc if self.client else ""
         for p in printers:
             self._emit("ssdp", json.dumps({
-                "dev_id": self.device_id(p["id"]), "dev_name": "%s (OS_3DPMS)" % p.get("name", p["id"]),
+                "dev_id": self.device_id(p["id"]), "dev_name": "%s (OpenPrintDeck)" % p.get("name", p["id"]),
                 "dev_ip": host, "dev_type": p.get("model") or p.get("protocol") or "",
                 "dev_signal": "", "connect_type": "lan", "bind_state": "free",
-                "connection_name": "OS_3DPMS"}))
+                "connection_name": "OpenPrintDeck"}))
 
     def _refresh(self):
         printers = self.client.printers()
@@ -293,7 +293,7 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
         return printers
 
     def resolve(self, *candidates):
-        """OS_3DPMS printer id for a job: the device Orca names, else the pinned one, the selected
+        """OpenPrintDeck printer id for a job: the device Orca names, else the pinned one, the selected
         one, or the only printer. Raises AgentError when it cannot tell."""
         with self.lock:
             known = dict(self.devices)
@@ -305,8 +305,8 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
                 return cand
         if len(known) == 1:
             return next(iter(known))
-        raise AgentError("choose an OS_3DPMS printer in the Device tab, or add /<printer-id> to the print host"
-                         " (OS_3DPMS printers: %s)" % (", ".join(sorted(known)) or "none"))
+        raise AgentError("choose an OpenPrintDeck printer in the Device tab, or add /<printer-id> to the print host"
+                         " (OpenPrintDeck printers: %s)" % (", ".join(sorted(known)) or "none"))
 
     def start_discovery(self, start, sending):
         if not start:
@@ -348,7 +348,7 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
             pass
         self._emit("local_connect", 0, dev_id, "")
         self.stop = threading.Event()
-        self.thread = threading.Thread(target=self._poll, args=(self.stop,), daemon=True, name="os3dpms-agent")
+        self.thread = threading.Thread(target=self._poll, args=(self.stop,), daemon=True, name="openprintdeck-agent")
         self.thread.start()
         return OK
 
@@ -431,11 +431,11 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
                 os.path.splitext(os.path.basename(src))[0]
             title = re.sub(r"(\.gcode)?(\.3mf|\.gcode)$", "", title, flags=re.I)
             name = safe_name(title + ext)
-            report(STAGE_UPLOAD, 0, "Sending %s to OS_3DPMS" % name)
+            report(STAGE_UPLOAD, 0, "Sending %s to OpenPrintDeck" % name)
             reply = client.upload(pid, src, name, action,
                                   progress=lambda pct: report(STAGE_UPLOAD, pct, "Sending %s" % name),
                                   cancelled=cancel_fn)
-            report(STAGE_FINISHED, 0, reply.get("message") or "Sent to OS_3DPMS")
+            report(STAGE_FINISHED, 0, reply.get("message") or "Sent to OpenPrintDeck")
             return OK
         except AgentError as e:
             report(STAGE_ERROR, FAILED, str(e))
@@ -456,11 +456,11 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
     def start_sdcard_print(self, params, update_fn, cancel_fn):
         return NOT_SUPPORTED
 
-    # ------------------------------------------------------------ binding: nothing to do for OS_3DPMS
+    # ------------------------------------------------------------ binding: nothing to do for OpenPrintDeck
 
     def bind_detect(self, dev_ip, sec_link, detect):
         detect.dev_id = self.device_id(self.pinned) if self.pinned else (dev_ip or "")
-        detect.dev_name = "OS_3DPMS"
+        detect.dev_name = "OpenPrintDeck"
         detect.connect_type = "lan"
         detect.bind_state = "free"
         return OK
@@ -472,20 +472,20 @@ class OS3DPMSAgentBase(pa.PrinterAgentBase):
     def request_bind_ticket(self): return (OK, "")
 
 
-class OS3DPMSQueueAgent(OS3DPMSAgentBase):
-    AGENT_ID = "os3dpms_queue"
-    AGENT_NAME = "OS_3DPMS (queue)"
+class OpenPrintDeckQueueAgent(OpenPrintDeckAgentBase):
+    AGENT_ID = "openprintdeck_queue"
+    AGENT_NAME = "OpenPrintDeck (queue)"
     PRINT_ACTION = "queue"
 
 
-class OS3DPMSDirectAgent(OS3DPMSAgentBase):
-    AGENT_ID = "os3dpms_direct"
-    AGENT_NAME = "OS_3DPMS (print now)"
+class OpenPrintDeckDirectAgent(OpenPrintDeckAgentBase):
+    AGENT_ID = "openprintdeck_direct"
+    AGENT_NAME = "OpenPrintDeck (print now)"
     PRINT_ACTION = "print"
 
 
 @orca.plugin
-class OS3DPMSPlugin(orca.base):
+class OpenPrintDeckPlugin(orca.base):
     def register_capabilities(self):
-        orca.register_capability(OS3DPMSQueueAgent)
-        orca.register_capability(OS3DPMSDirectAgent)
+        orca.register_capability(OpenPrintDeckQueueAgent)
+        orca.register_capability(OpenPrintDeckDirectAgent)

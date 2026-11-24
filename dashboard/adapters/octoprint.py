@@ -3,7 +3,7 @@
 A Marlin printer that is plugged into a Raspberry Pi (or PC) running OctoPrint is added as type
 "octoprint" (*Marlin through OctoPrint*), not as a USB printer: OctoPrint owns the serial port.
 Target: Anycubic Kossel Linear Plus and other Marlin printers attached to OctoPrint.
-OctoPrint is optional for OS_3DPMS as a whole: it is only this adapter's transport.
+OctoPrint is optional for OpenPrintDeck as a whole: it is only this adapter's transport.
 
 Status comes from OctoPrint's push channel when it works: the raw WebSocket behind SockJS at
 /sockjs/websocket, signed in with a passive /api/login using the API key. OctoPrint sends the

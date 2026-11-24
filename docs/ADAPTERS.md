@@ -1,7 +1,7 @@
 # Printer adapters
 
 Every printer in `config.json` is handled by an **adapter** (`dashboard/adapters/`). The rest of
-OS_3DPMS (monitor, dashboard, uploads, queue, notifications) only talks to the adapter interface,
+OpenPrintDeck (monitor, dashboard, uploads, queue, notifications) only talks to the adapter interface,
 so a new protocol is one new file plus a line in `adapters/__init__.py`.
 
 | `type` | Adapter | Protocol | Live status | Upload | Start / pause / resume / cancel | Files | Camera | History |
@@ -82,7 +82,7 @@ the WebSocket is down, status comes from HTTP. With an API key the WebSocket use
 Pi or PC running OctoPrint is added as type `octoprint` (*Marlin through OctoPrint*), with the
 OctoPrint address and API key, **not** as `marlin_serial`: OctoPrint owns the USB port, and this
 gives uploads, start/pause/resume/cancel and the webcam. `marlin_serial` is only for a printer
-plugged straight into the OS_3DPMS PC.
+plugged straight into the OpenPrintDeck PC.
 
 Status is pushed: the adapter signs in with a passive `POST /api/login` using the API key (a
 WebSocket cannot send `X-Api-Key`), opens OctoPrint's raw SockJS WebSocket at
@@ -108,7 +108,7 @@ confirm overwrite), pause/resume/cancel use `/api/v1/job/<id>`. **Not yet tested
 held low (most boards then do not reset), sends only read commands from a fixed allowlist (`M115` firmware info, `M105`
 temperatures, `M114` position, `M119` endstops, `M27` SD progress, `M31` print time, `M503`
 settings report, `M155`/`M154` auto-report) and refuses everything else. No arbitrary G-code
-endpoint exists anywhere in OS_3DPMS. If another program (OctoPrint, Pronterface, Cura, a slicer)
+endpoint exists anywhere in OpenPrintDeck. If another program (OctoPrint, Pronterface, Cura, a slicer)
 has the port open, the adapter reports offline instead of fighting for it.
 
 ## Safe first connection (Sapphire Pro, Kossel, Bambu P1S)

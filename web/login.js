@@ -13,6 +13,6 @@ document.getElementById('login-form').addEventListener('submit', async (ev) => {
     if (r.ok) { location.href = '/'; return; }
     err.textContent = (await r.json()).error || 'Sign in failed';
   } catch (e) {
-    err.textContent = 'OS_3DPMS is not answering';
+    err.textContent = 'OpenPrintDeck is not answering';
   }
 });

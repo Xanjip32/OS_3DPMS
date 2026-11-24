@@ -573,7 +573,7 @@ class LimitedServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "OS_3DPMS"
+    server_version = "OpenPrintDeck"
     sys_version = ""
     timeout = 60  # drop clients that stall (slowloris)
     app = None
@@ -596,7 +596,7 @@ class Handler(BaseHTTPRequestHandler):
     def internal_error(self, error):
         log.exception("request %s %s failed", self.command, urllib.parse.urlsplit(self.path).path)
         try:
-            self.send_json(500, {"error": "OS_3DPMS error: %s" % (str(error)[:200] or type(error).__name__)})
+            self.send_json(500, {"error": "OpenPrintDeck error: %s" % (str(error)[:200] or type(error).__name__)})
         except OSError:
             pass
 
@@ -1154,7 +1154,7 @@ class Handler(BaseHTTPRequestHandler):
             live = " Live status is connected." if watcher and watcher.connected else ""
             return True, "Access code accepted (serial %s).%s" % (p["serial"], live)
         self.app.bambu_listener.listen(60)
-        return True, ("Access code accepted. The serial number is still missing: OS_3DPMS is listening for "
+        return True, ("Access code accepted. The serial number is still missing: OpenPrintDeck is listening for "
                       "the printer's announcement to fill it in. You can also enter it under Advanced "
                       "settings (printer screen: Settings > Device).")
 
@@ -1712,9 +1712,9 @@ def manage_token(args):
         return 2
     if token:
         print("API token %s (%s). Copy it now, it is not shown again:\n\n  %s\n\n"
-              "Restart OS_3DPMS to apply." % (args.add_token.strip().lower(), role, token))
+              "Restart OpenPrintDeck to apply." % (args.add_token.strip().lower(), role, token))
     else:
-        print("API token %s removed. Restart OS_3DPMS to apply." % args.remove_token.strip().lower())
+        print("API token %s removed. Restart OpenPrintDeck to apply." % args.remove_token.strip().lower())
     return 0
 
 
@@ -1748,12 +1748,12 @@ def manage_user(args, password=None):
         print("config.json: %s" % e)
         return 2
     config.save(args.config, cfg)
-    print("%s %s. Restart OS_3DPMS to apply." % (name, "saved as %s" % args.role if args.add_user else "removed"))
+    print("%s %s. Restart OpenPrintDeck to apply." % (name, "saved as %s" % args.role if args.add_user else "removed"))
     return 0
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="OS_3DPMS", description="3D printer camera dashboard")
+    parser = argparse.ArgumentParser(prog="OpenPrintDeck", description="3D printer camera dashboard")
     parser.add_argument("--config", default=os.path.join(ROOT, "config.json"))
     parser.add_argument("--data-dir", default=ROOT, help="where logs, pins and temp files go")
     parser.add_argument("--open-setup", action="store_true", help="open the setup page in a browser")
@@ -1807,7 +1807,7 @@ def main(argv=None):
 
     threading.Thread(target=admin.serve_forever, daemon=True).start()
     setup_url = "http://127.0.0.1:%d/setup" % app.cfg["admin_port"]
-    log.info("OS_3DPMS %s running. Setup on this PC: %s", __version__, setup_url)
+    log.info("OpenPrintDeck %s running. Setup on this PC: %s", __version__, setup_url)
     if args.open_setup:
         webbrowser.open(setup_url)
     try:

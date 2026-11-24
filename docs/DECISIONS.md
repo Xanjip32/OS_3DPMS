@@ -20,7 +20,7 @@ well-supported option was taken and recorded here. Each can be revisited.
 | 13 | Roles: `admin` / `operator` / `viewer`, plus `read_only_users` for Tailscale accounts | Viewing vs. controlling was the main gap; admin is reserved for future remote settings. |
 | 14 | Cancel and start need `{"confirm": "<printer id>"}` (HTTP 428 otherwise); pause/resume do not | Cancel/start are irreversible or move hardware; pause/resume are recoverable. |
 | 15 | **No arbitrary G-code and no temperature setting** in any API, even where the protocol could | Brief requirement; smallest blast radius. `can_control_temperature` is reported but not offered. |
-| 16 | **Temperature runaway is left to firmware**; OS_3DPMS surfaces the shutdown / HMS error and notifies | Firmware reacts in milliseconds; a dashboard polling every few seconds must not pretend to be a safety system. |
+| 16 | **Temperature runaway is left to firmware**; OpenPrintDeck surfaces the shutdown / HMS error and notifies | Firmware reacts in milliseconds; a dashboard polling every few seconds must not pretend to be a safety system. |
 | 17 | E-mail notifications are configured in `config.json` only | Keeps the Setup page simple; SMTP is an advanced option. TLS verified, plain SMTP only to localhost. |
 | 18 | **No custom VPN**; Tailscale stays the only remote path, and stays optional | Proven, audited, already integrated; building a VPN would add risk. |
 | 19 | MCP is **design only** (`docs/MCP.md`) | Brief requirement; it should be built on top of the stable HTTP API and roles. |

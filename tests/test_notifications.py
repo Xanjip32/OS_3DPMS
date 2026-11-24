@@ -216,7 +216,7 @@ class EmailTests(unittest.TestCase):
         n = config.validate({"notifications": dict(self.SMTP)})["notifications"]
         with mock.patch("smtplib.SMTP") as smtp:
             server = smtp.return_value.__enter__.return_value = smtp.return_value
-            notify.send_email(n, "app-password", "[OS_3DPMS] Voron: complete", "done", image=b"\xff\xd8x")
+            notify.send_email(n, "app-password", "[OpenPrintDeck] Voron: complete", "done", image=b"\xff\xd8x")
         smtp.assert_called_once_with("smtp.example.com", 587, timeout=20)
         server.starttls.assert_called_once()
         server.login.assert_called_once_with("bot@example.com", "app-password")

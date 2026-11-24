@@ -1,5 +1,5 @@
 {
-  "name": "OS_3DPMS Printers",
+  "name": "OpenPrintDeck Printers",
   "short_name": "Printers",
   "description": "Live cameras, status and G-code upload for your 3D printers.",
   "id": "/",

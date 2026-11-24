@@ -1,11 +1,11 @@
-"""Require a login for Mainsail/Fluidd on your Klipper printers, without breaking OS_3DPMS.
+"""Require a login for Mainsail/Fluidd on your Klipper printers, without breaking OpenPrintDeck.
 
 Usage (on the printer PC, while the printers are idle):
     python tools\\secure_printers.py           secure every Klipper printer in config.json
     python tools\\secure_printers.py --undo    put each printer's old settings back
 
 For each printer it:
- 1. saves the printer's Moonraker API key in OS_3DPMS (encrypted), so status, cameras
+ 1. saves the printer's Moonraker API key in OpenPrintDeck (encrypted), so status, cameras
     and uploads keep working,
  2. creates your login (asked once, typing hidden) unless that user already exists,
  3. trusts only the printer itself (KlipperScreen, OctoEverywhere) instead of the whole
@@ -13,7 +13,7 @@ For each printer it:
  4. restarts Moonraker, but never during a print.
 
 Afterwards Mainsail asks for the login everywhere: on the Wi-Fi, through the dashboard's
-Mainsail button and over Tailscale. Restart OS_3DPMS (stop.bat, then start) to use the keys.
+Mainsail button and over Tailscale. Restart OpenPrintDeck (stop.bat, then start) to use the keys.
 """
 import getpass
 import json
@@ -130,7 +130,7 @@ def secure(p, username, password):
     if not key:
         key = call(p, "/access/api_key")["result"]  # allowed while this PC is still trusted
         save_key(p["id"], key)
-        print("   Saved its API key in OS_3DPMS.")
+        print("   Saved its API key in OpenPrintDeck.")
     users = [u.get("username") for u in call(p, "/access/users/list", key)["result"]["users"]]
     if username in users:
         print("   Login '%s' already exists: kept its password." % username)
@@ -191,7 +191,7 @@ def main():
         except (OSError, ValueError, KeyError) as e:
             failed += 1
             print("   FAILED: %s. This printer was left as it was where possible." % e)
-    print("\nRestart OS_3DPMS so it uses the saved API keys (stop.bat, then start).")
+    print("\nRestart OpenPrintDeck so it uses the saved API keys (stop.bat, then start).")
     print("Slicers that upload straight to a printer now need its Moonraker API key;")
     print("or send files with the dashboard's Send file button instead.")
     print("To undo: python tools\\secure_printers.py --undo")

@@ -24,8 +24,8 @@ jobs:
           [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but dashboard/__init__.py says $v"; exit 1; }
           awk -v h="## $v" 'index($0, h) == 1 {on = 1; next} on && /^## / {exit} on' CHANGELOG.md > changes.md
           [ -s changes.md ] || { echo "::error::CHANGELOG.md has no '## $v' section"; exit 1; }
-          { echo "**Install (Windows 10/11, x64):** download OS_3DPMS-Windows-x64.zip, extract it to a"
-            echo "permanent folder (for example C:\\OS_3DPMS) on the PC that can reach your printers, and"
+          { echo "**Install (Windows 10/11, x64):** download OpenPrintDeck-Windows-x64.zip, extract it to a"
+            echo "permanent folder (for example C:\\OpenPrintDeck) on the PC that can reach your printers, and"
             echo "double-click install.bat. Setup opens and guides you through printers and Tailscale."
             echo "Python $PYTHON is included."
             echo
@@ -35,23 +35,23 @@ jobs:
       - name: Build the package (app + Python)
         shell: pwsh
         run: |
-          git archive --format=zip --output=app.zip --prefix=OS_3DPMS/ HEAD
+          git archive --format=zip --output=app.zip --prefix=OpenPrintDeck/ HEAD
           Expand-Archive app.zip -DestinationPath out
-          Remove-Item -Recurse -Force out/OS_3DPMS/tests, out/OS_3DPMS/.github
+          Remove-Item -Recurse -Force out/OpenPrintDeck/tests, out/OpenPrintDeck/.github
           Invoke-WebRequest "https://www.python.org/ftp/python/$env:PYTHON/python-$env:PYTHON-embed-amd64.zip" -OutFile python.zip
-          Expand-Archive python.zip -DestinationPath out/OS_3DPMS/runtime
+          Expand-Archive python.zip -DestinationPath out/OpenPrintDeck/runtime
           # Only ship Python that carries the Python Software Foundation's valid code signature.
-          $sig = Get-AuthenticodeSignature out/OS_3DPMS/runtime/python.exe
+          $sig = Get-AuthenticodeSignature out/OpenPrintDeck/runtime/python.exe
           if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Python Software Foundation') {
             throw "python.exe signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
           }
-          Compress-Archive out/OS_3DPMS -DestinationPath OS_3DPMS-Windows-x64.zip
+          Compress-Archive out/OpenPrintDeck -DestinationPath OpenPrintDeck-Windows-x64.zip
 
       - name: Start the packaged app on a clean PC
         shell: pwsh
         run: |
-          Expand-Archive OS_3DPMS-Windows-x64.zip -DestinationPath smoke
-          $app = Resolve-Path smoke/OS_3DPMS
+          Expand-Archive OpenPrintDeck-Windows-x64.zip -DestinationPath smoke
+          $app = Resolve-Path smoke/OpenPrintDeck
           $proc = Start-Process "$app/runtime/python.exe" -ArgumentList "`"$app/run.py`"" -WorkingDirectory $app -PassThru
           $ok = $false
           foreach ($i in 1..30) {
@@ -70,5 +70,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; *) pre= ;; esac   # v1.5.0-preview.1 is a preview
-          gh release create "$GITHUB_REF_NAME" OS_3DPMS-Windows-x64.zip $pre \
-            --title "OS_3DPMS ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" OpenPrintDeck-Windows-x64.zip $pre \
+            --title "OpenPrintDeck ${GITHUB_REF_NAME#v}" --notes-file notes.md

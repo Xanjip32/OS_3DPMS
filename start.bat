@@ -1,5 +1,5 @@
 @echo off
-rem Run OS_3DPMS in this window (useful for troubleshooting). Close the window to stop it.
+rem Run OpenPrintDeck in this window (useful for troubleshooting). Close the window to stop it.
 cd /d "%~dp0"
 call "%~dp0stop.bat" quiet
 if exist "%~dp0runtime\python.exe" (

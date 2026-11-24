@@ -70,7 +70,7 @@ def describe(kind, name, st):
             name, file, (" (" + msg + ")") if msg else ""),
         "bed_not_clear": "%s: the bed is not clear, so the next job %s waits. Remove the part and it starts "
                          "by itself%s" % (name, file, (" (" + msg + ")") if msg else ""),
-        "test": "Test notification from OS_3DPMS",
+        "test": "Test notification from OpenPrintDeck",
     }[kind]
     return "%s %s" % (ICONS[kind], text)
 
@@ -252,7 +252,7 @@ class Monitor:
     def test_event(self):
         """Record a test event for the browser; the caller delivers it to phones."""
         with self.lock:
-            return self._emit("test", {"id": "", "name": "OS_3DPMS"}, {}, notify=False)
+            return self._emit("test", {"id": "", "name": "OpenPrintDeck"}, {}, notify=False)
 
     def events_after(self, after):
         with self.lock:
